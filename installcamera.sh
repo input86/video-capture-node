@@ -16,16 +16,16 @@ sudo apt update
 sudo apt install -y python3 python3-venv python3-pip \
   libcamera-apps ffmpeg i2c-tools python3-rpi.gpio python3-picamera2
 
-# 2. Create project directory
+# 2. Create project directory (wipe & recreate for idempotence)
 sudo rm -rf "$INSTALL_DIR"
 mkdir -p "$INSTALL_DIR"
 cd "$INSTALL_DIR"
 
-# 3. Set up Python virtual environment
-python3 -m venv venv
+# 3. Set up Python virtual environment (with access to system site-packages)
+python3 -m venv --system-site-packages venv
 source venv/bin/activate
 
-# 4. Install Python packages
+# 4. Install Python packages into the venv
 pip install --upgrade pip
 pip install gpiozero requests pyyaml adafruit-circuitpython-vl53l0x smbus2 adafruit-blinka RPi.GPIO
 
@@ -125,8 +125,10 @@ finally:
     picam2.stop()
 EOF
 
-# 7. Create systemd service (now expands INSTALL_DIR)
-sudo tee /etc/systemd/system/camera-node.service > /dev/null <<EOF
+chmod +x src/camera_node.py
+
+# 7. Create systemd service
+sudo tee /etc/systemd/system/camera-node.service > /dev/null << EOF
 [Unit]
 Description=Camera Node Service
 After=network.target
