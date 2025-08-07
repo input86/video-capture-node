@@ -125,16 +125,16 @@ finally:
     picam2.stop()
 EOF
 
-# 7. Create systemd service
-sudo tee /etc/systemd/system/camera-node.service << 'EOF'
+# 7. Create systemd service (now expands INSTALL_DIR)
+sudo tee /etc/systemd/system/camera-node.service > /dev/null <<EOF
 [Unit]
 Description=Camera Node Service
 After=network.target
 
 [Service]
 User=pi
-WorkingDirectory=$INSTALL_DIR
-ExecStart=$INSTALL_DIR/venv/bin/python3 $INSTALL_DIR/src/camera_node.py
+WorkingDirectory=${INSTALL_DIR}
+ExecStart=${INSTALL_DIR}/venv/bin/python3 ${INSTALL_DIR}/src/camera_node.py
 Restart=always
 RestartSec=5
 
