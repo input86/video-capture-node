@@ -2,3 +2,12 @@ venv/
 __pycache__/
 *.pyc
 /tmp/
+hub_server/venv/
+camera_node/venv/
+**/__pycache__/
+**/*.mp4
+**/*.h264
+**/*.log
+**/*.db
+**/*.sqlite
+camera_node/queue/
