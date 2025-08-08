@@ -1,0 +1,13 @@
+hub_url: "http://<hub-ip>:5000"
+node_id: "node01"
+auth_token: "YOUR_SHARED_SECRET"
+sensor:
+  threshold_mm: 1000
+  debounce_ms: 200
+recording:
+  resolution: "1280x720"
+  framerate: 30
+  duration_s: 5
+storage:
+  max_clips: 100
+  min_free_percent: 10
