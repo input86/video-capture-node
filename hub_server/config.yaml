@@ -1,8 +1,8 @@
 auth_tokens:
   node01: "NODE01_ABC123"    # Avoid shell metacharacters like ! $
-
+  cam01: q1w2e3r4t5y6u7i8o9p0
 storage:
   base_dir: "/home/pi/data/clips"
-  min_free_percent: 5
+  min_free_percent: 10
 
 database: "/home/pi/data/hub.db"
