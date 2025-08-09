@@ -1,0 +1,20 @@
+[Unit]
+Description=Hub Heartbeat Microservice (Flask)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/hub_server
+Environment="HUB_DATA_DIR=/home/pi/data"
+Environment="HEARTBEAT_HOST=0.0.0.0"
+Environment="HEARTBEAT_PORT=5050"
+# Optional per-node secrets via env, else heartbeat_config.py defaults:
+ Environment="CAM01_TOKEN=q1w2e3r4t5y6u7i8o9p0"
+ExecStart=/usr/bin/python3 /home/pi/hub_server/heartbeatd.py
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
