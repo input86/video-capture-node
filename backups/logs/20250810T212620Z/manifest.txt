@@ -1,0 +1,6 @@
+Manifest UTC: 2025-08-10T21:26:20Z
+Host: hub-cam01
+Kernel: Linux hub-cam01 6.12.25+rpt-rpi-v8 #1 SMP PREEMPT Debian 1:6.12.25-1+rpt1 (2025-04-30) aarch64 GNU/Linux
+Services:
+active
+active
