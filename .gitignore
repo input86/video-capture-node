@@ -26,3 +26,18 @@ venv/
 
 # OS/editor
 .DS_Store
+# Python + build junk
+__pycache__/
+*.pyc
+*.pyo
+.mypy_cache/
+.pytest_cache/
+build/
+dist/
+
+# Virtual envs
+venv/
+**/venv/
+
+# OS/editor files
+.DS_Store
