@@ -1,0 +1,9 @@
+Manifest UTC: 2025-08-10T21:26:07Z
+Host: hub-server
+Kernel: Linux hub-server 6.12.25+rpt-rpi-v8 #1 SMP PREEMPT Debian 1:6.12.25-1+rpt1 (2025-04-30) aarch64 GNU/Linux
+Data dir: /home/pi/data
+DB path:  /home/pi/data/hub.db
+Services:
+active
+active
+active

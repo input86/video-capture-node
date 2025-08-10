@@ -1,7 +1,8 @@
+# /etc/systemd/system/tft-ui.service
 [Unit]
 Description=TFT UI Service
-Wants=graphical.target
 After=graphical.target
+Wants=graphical.target
 
 [Service]
 Type=simple

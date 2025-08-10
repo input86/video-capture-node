@@ -3,6 +3,7 @@ auth_tokens:
   cam01: q1w2e3r4t5y6u7i8o9p0
 storage:
   base_dir: "/home/pi/data"
+  clips_subdir: "clips"
   min_free_percent: 10
 
 database: "/home/pi/data/hub.db"
