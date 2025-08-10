@@ -11,3 +11,18 @@ camera_node/venv/
 **/*.db
 **/*.sqlite
 camera_node/queue/
+# Python + build junk
+__pycache__/
+*.pyc
+*.pyo
+.mypy_cache/
+.pytest_cache/
+build/
+dist/
+
+# Virtual envs
+venv/
+**/venv/
+
+# OS/editor
+.DS_Store
