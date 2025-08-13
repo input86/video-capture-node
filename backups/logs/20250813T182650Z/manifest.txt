@@ -1,0 +1,8 @@
+UTC: 2025-08-13T18:26:50Z
+Host: hub-cam01-
+Kernel: Linux hub-cam01 6.12.25+rpt-rpi-v8 #1 SMP PREEMPT Debian 1:6.12.25-1+rpt1 (2025-04-30) aarch64 GNU/Linux
+Python: Python 3.11.2
+
+Runtime: /home/pi/camera_node
+Repo dst: camera_runtime
+Services: camera-node camera-heartbeat
