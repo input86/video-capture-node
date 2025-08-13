@@ -25,9 +25,27 @@ if [ ! -d "$REPO_DIR/.git" ]; then
   git clone "$REPO_SSH" "$REPO_DIR"
 fi
 cd "$REPO_DIR"
-git fetch --tags --prune --prune-tags
+
+# Git identity & safety knobs (idempotent)
+git config --global user.email >/dev/null 2>&1 || git config --global user.email "pi@$(hostname -f || hostname)"
+git config --global user.name  >/dev/null 2>&1 || git config --global user.name  "Pi Camera ($(hostname))"
+git config --global pull.rebase true
+git config --global rebase.autostash true
+git config --global fetch.prune true
+git config --global fetch.pruneTags true
+
+# Prepare main cleanly
+git fetch origin --tags --prune --prune-tags
 git checkout main || git checkout -b main
-git pull --rebase || true
+
+# If tree is dirty before pulling, checkpoint or stash
+if ! git diff --quiet || ! git diff --cached --quiet; then
+  git add -A || true
+  git commit -m "checkpoint before sync: ${DATE_HUMAN}" || git stash --include-untracked
+fi
+
+# Rebase on latest main
+git pull --rebase origin main || true
 
 # --- Layout ---
 mkdir -p "$CAM_REPO_DST" services/camera backups/logs/"$DATE_SAFE" backups/camera
@@ -94,10 +112,17 @@ fi
   echo "Services: ${CAM_SERVICES[*]}"
 } > "backups/logs/$DATE_SAFE/manifest.txt"
 
-# --- Commit & push (main) ---
+# --- Commit locally ---
 git add "$CAM_REPO_DST" services/camera backups/logs/"$DATE_SAFE" backups/camera || true
 git commit -m "$COMMIT_MSG" || echo "[i] Nothing to commit."
-git push origin main
+
+# --- Push (with one-shot rebase retry on rejection) ---
+if ! git push origin main; then
+  echo "[i] Push rejected; rebasing on origin/main and retrying..."
+  git fetch origin
+  git rebase origin/main
+  git push origin main
+fi
 
 # --- Tag (optional; non-disruptive) ---
 if git ls-remote --tags origin | grep -q "refs/tags/$TAG_BASE$"; then
