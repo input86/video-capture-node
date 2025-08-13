@@ -8,6 +8,7 @@ WorkingDirectory=/home/pi/camera_node
 ExecStart=/home/pi/camera_node/venv/bin/python3 /home/pi/camera_node/src/camera_node.py
 Restart=always
 RestartSec=5
+Environment=PYTHONUNBUFFERED=1
 
 [Install]
 WantedBy=multi-user.target

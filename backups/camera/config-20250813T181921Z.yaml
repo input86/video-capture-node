@@ -1,0 +1,15 @@
+hub_url: http://192.168.0.150:5000
+node_id: cam01
+auth_token: q1w2e3r4t5y6u7i8o9p0
+sensor:
+  threshold_mm: 1000
+  debounce_ms: 200
+recording:
+  resolution: 1280x720
+  framerate: 30
+  duration_s: 5
+  bitrate_kbps: 10000
+  rotation: 0
+storage:
+  min_free_percent: 10
+heartbeat_interval_sec: 10
