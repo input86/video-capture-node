@@ -41,3 +41,33 @@ venv/
 
 # OS/editor files
 .DS_Store
+# Python junk
+__pycache__/
+*.pyc
+.mypy_cache/
+.pytest_cache/
+
+# Virtual envs
+venv/
+**/venv/
+.venv/
+**/.venv/
+
+# Node/JS junk
+node_modules/
+dist/
+build/
+.next/
+
+# Media & local state (clips are not stored in repo)
+*.mp4
+
+# OS/editor
+.DS_Store
+Thumbs.db
+
+# Secrets (do not commit)
+.env
+*.env
+.secrets/
+secrets/
