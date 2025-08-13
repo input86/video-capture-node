@@ -1,0 +1,73 @@
+{% extends "layout.html" %}
+{% block title %}Clips{% endblock %}
+{% block content %}
+<h1 class="mb-3">Clips</h1>
+
+<div class="mb-3 d-flex gap-2">
+  <button id="btnThumbs" class="btn btn-outline-primary">Build / Prune Thumbnails</button>
+</div>
+
+<div class="card">
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-sm mb-0 align-middle">
+        <thead class="table-light">
+          <tr>
+            <th>Thumbnail</th>
+            <th>Clip</th>
+            <th>Size</th>
+            <th>Modified</th>
+            <th class="text-end">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for c in clips %}
+          <tr>
+            <td style="width:140px">
+              <img src="/thumb/{{ c.rel[:-4] }}" alt="thumb" class="img-fluid rounded border">
+            </td>
+            <td><code>{{ c.rel }}</code></td>
+            <td>{{ c.size|human_bytes }}</td>
+            <td>{{ c.mtime|date_fmt }}</td>
+            <td class="text-end">
+              <a class="btn btn-sm btn-outline-primary" href="/download/{{ c.rel }}">Download</a>
+              <button class="btn btn-sm btn-outline-danger btn-del" data-rel="{{ c.rel }}">Delete</button>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="5" class="text-center text-muted py-4">No clips found.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+async function postJSON(url, body){
+  const r = await fetch(url, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body||{})});
+  const d = await r.json().catch(()=> ({}));
+  if(!r.ok || !d.ok){ throw new Error((d && (d.error||d.raw)) || r.statusText); }
+  return d;
+}
+
+document.getElementById('btnThumbs').addEventListener('click', async ()=>{
+  try{
+    const res = await postJSON('/action/thumbs/run', {});
+    alert(`Thumbnails built: ${res.built}, removed: ${res.removed}`);
+    location.reload();
+  }catch(e){ alert('Thumbnail job failed: '+e.message); }
+});
+
+for(const btn of document.querySelectorAll('.btn-del')){
+  btn.addEventListener('click', async ()=>{
+    if(!confirm('Delete this clip and its thumbnail?')) return;
+    try{
+      const rel = btn.dataset.rel;
+      await postJSON('/action/clip/delete', {relpath: rel});
+      btn.closest('tr').remove();
+    }catch(e){ alert('Delete failed: '+e.message); }
+  });
+}
+</script>
+{% endblock %}

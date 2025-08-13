@@ -1,0 +1,50 @@
+{% extends "layout.html" %}
+{% block title %}Preview — {{ camera_id }}{% endblock %}
+
+{% block content %}
+<h1 class="mb-3">Preview — {{ camera_id }}</h1>
+
+<div class="mb-3">
+  <div class="d-flex gap-2">
+    <button id="btnStart" class="btn btn-primary">Enable Preview</button>
+    <button id="btnStop" class="btn btn-outline-secondary">Exit Preview</button>
+  </div>
+  <div class="form-text">Preview stops the recorder on the node while active.</div>
+</div>
+
+<div class="ratio ratio-16x9 border rounded bg-light d-flex align-items-center justify-content-center">
+  <img id="stream" alt="preview stream" style="max-width:100%; max-height:100%; object-fit:contain; display:none;">
+  <div id="nostream" class="text-muted">Preview not running</div>
+</div>
+
+<script>
+const camId = {{ camera_id|tojson }};
+const host = {{ (endpoint.ssh_host or '')|tojson }};
+
+async function postJSON(url, body) {
+  const res = await fetch(url, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body||{})});
+  const data = await res.json().catch(()=> ({}));
+  if(!res.ok || !data.ok){ throw new Error((data && (data.error||data.raw)) || res.statusText); }
+  return data;
+}
+
+async function startPreview() {
+  await postJSON('/action/secure/preview/start', {camera_id: camId});
+  document.getElementById('stream').src = `http://${host}:8080/stream.mjpg?ts=${Date.now()}`;
+  document.getElementById('stream').style.display = '';
+  document.getElementById('nostream').style.display = 'none';
+}
+async function stopPreview() {
+  await postJSON('/action/secure/preview/stop', {camera_id: camId});
+  document.getElementById('stream').style.display = 'none';
+  document.getElementById('nostream').style.display = '';
+}
+
+document.getElementById('btnStart').addEventListener('click', async ()=>{
+  try { await startPreview(); } catch(e){ alert('Start failed: '+e.message); }
+});
+document.getElementById('btnStop').addEventListener('click', async ()=>{
+  try { await stopPreview(); } catch(e){ alert('Stop failed: '+e.message); }
+});
+</script>
+{% endblock %}

@@ -1,0 +1,163 @@
+{% extends "layout.html" %}
+{% block title %}Camera Settings{% endblock %}
+
+{% block content %}
+<h1 class="mb-3">Camera Settings</h1>
+<p class="text-muted">Values shown come from the node’s <code>config.yaml</code> when reachable; otherwise the last saved values on the hub.</p>
+
+<div class="accordion" id="camsAccordion">
+  {% for cam in cameras %}
+  {% set cam_id = cam.camera_id %}
+  {% set acc_id = 'acc-' ~ cam_id %}
+  {% set hdr_id = 'hdr-' ~ cam_id %}
+  {% set col_id = 'col-' ~ cam_id %}
+  {% set ep = endpoints[cam_id] %}
+
+  <div class="accordion-item">
+    <h2 class="accordion-header" id="{{ hdr_id }}">
+      <button class="accordion-button collapsed d-flex align-items-center" type="button"
+              data-bs-toggle="collapse" data-bs-target="#{{ col_id }}"
+              aria-expanded="false" aria-controls="{{ col_id }}">
+        <div class="me-2"><strong>{{ cam_id }}</strong></div>
+        <span class="badge {% if cam.source == 'node' %}bg-success{% else %}bg-secondary{% endif %} me-2">
+          {{ cam.source == 'node' and 'node' or 'hub' }}
+        </span>
+        {% if cam.node_error %}
+          <span class="text-danger small">( {{ cam.node_error }} )</span>
+        {% endif %}
+      </button>
+    </h2>
+    <div id="{{ col_id }}" class="accordion-collapse collapse" aria-labelledby="{{ hdr_id }}" data-bs-parent="#camsAccordion">
+      <div class="accordion-body">
+        <!-- ACTIONS (top) -->
+        <div class="d-flex flex-wrap gap-2 mb-3">
+          <a class="btn btn-sm btn-outline-primary" href="/preview/{{ cam_id }}">Preview</a>
+          <button class="btn btn-sm btn-primary btn-save" data-cam="{{ cam_id }}">Save</button>
+          <button class="btn btn-sm btn-secondary btn-save-endpoint" data-cam="{{ cam_id }}">Save Endpoint</button>
+          <button class="btn btn-sm btn-outline-success btn-push" data-cam="{{ cam_id }}">Push to Node & Restart</button>
+          <button class="btn btn-sm btn-outline-info btn-import" data-cam="{{ cam_id }}">Import From Node</button>
+          <span class="ms-auto small text-muted">Last updated: {{ cam.updated_at and cam.updated_at|date_fmt or "—" }}</span>
+        </div>
+
+        <!-- SETTINGS FORM -->
+        <form class="camera-form" data-camera="{{ cam_id }}">
+          <div class="row g-3">
+            <div class="col-md-3">
+              <label class="form-label">Resolution</label>
+              <input type="text" class="form-control" name="resolution" value="{{ cam.resolution }}">
+              <div class="form-text">e.g. 1280x720, 1920x1080</div>
+            </div>
+            <div class="col-md-2">
+              <label class="form-label">FPS</label>
+              <input type="number" min="1" max="120" class="form-control" name="fps" value="{{ cam.fps }}">
+            </div>
+            <div class="col-md-2">
+              <label class="form-label">Bitrate (kbps)</label>
+              <input type="number" min="100" max="100000" class="form-control" name="bitrate_kbps" value="{{ cam.bitrate_kbps }}">
+              <div class="form-text">H.264 target bitrate</div>
+            </div>
+            <div class="col-md-2">
+              <label class="form-label">Rotation</label>
+              <select class="form-select" name="rotation">
+                {% for r in [0,90,180,270] %}
+                <option value="{{ r }}" {% if cam.rotation == r %}selected{% endif %}>{{ r }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">Clip Duration (s)</label>
+              <input type="number" min="2" max="600" class="form-control" name="clip_duration_s" value="{{ cam.clip_duration_s }}">
+            </div>
+          </div>
+
+          <hr>
+
+          <h6 class="mb-2">Node Endpoint</h6>
+          <div class="row g-3">
+            <div class="col-md-3">
+              <label class="form-label">SSH Host</label>
+              <input type="text" class="form-control ep" name="ssh_host" value="{{ ep.ssh_host }}">
+            </div>
+            <div class="col-md-2">
+              <label class="form-label">SSH User</label>
+              <input type="text" class="form-control ep" name="ssh_user" value="{{ ep.ssh_user }}">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label">Config Path</label>
+              <input type="text" class="form-control ep" name="config_path" value="{{ ep.config_path }}">
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">Service Name</label>
+              <input type="text" class="form-control ep" name="service_name" value="{{ ep.service_name }}">
+            </div>
+          </div>
+        </form>
+
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function postJSON(url, body) {
+  const res = await fetch(url, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body || {})});
+  const data = await res.json().catch(()=> ({}));
+  if(!res.ok || !data.ok){ throw new Error((data && (data.error||data.raw)) || res.statusText); }
+  return data;
+}
+
+// Delegate clicks so it works inside accordion panels
+document.addEventListener('click', async (ev) => {
+  const btn = ev.target.closest('.btn-save, .btn-save-endpoint, .btn-push, .btn-import');
+  if(!btn) return;
+
+  const cam = btn.dataset.cam;
+  const form = document.querySelector(`.camera-form[data-camera="${cam}"]`);
+  if(!form){ alert('Form not found for '+cam); return; }
+
+  try {
+    if (btn.classList.contains('btn-save')) {
+      const payload = {
+        camera_id: cam,
+        resolution: form.querySelector('[name=resolution]').value.trim(),
+        fps: parseInt(form.querySelector('[name=fps]').value,10),
+        bitrate_kbps: parseInt(form.querySelector('[name=bitrate_kbps]').value,10),
+        rotation: parseInt(form.querySelector('[name=rotation]').value,10),
+        clip_duration_s: parseInt(form.querySelector('[name=clip_duration_s]').value,10),
+      };
+      await postJSON('/action/secure/cameras/save', payload);
+      alert('Saved on hub.');
+    }
+
+    else if (btn.classList.contains('btn-save-endpoint')) {
+      const payload = {
+        camera_id: cam,
+        ssh_host: form.querySelector('[name=ssh_host]').value.trim(),
+        ssh_user: form.querySelector('[name=ssh_user]').value.trim(),
+        config_path: form.querySelector('[name=config_path]').value.trim(),
+        service_name: form.querySelector('[name=service_name]').value.trim(),
+      };
+      await postJSON('/action/secure/cameras/save_endpoint', payload);
+      alert('Endpoint saved.');
+    }
+
+    else if (btn.classList.contains('btn-push')) {
+      await postJSON('/action/secure/cameras/push', {camera_id: cam});
+      alert('Pushed to node and restarted.');
+    }
+
+    else if (btn.classList.contains('btn-import')) {
+      await postJSON('/action/secure/cameras/import_from_node', {camera_id: cam});
+      location.reload();
+    }
+
+  } catch(e) {
+    alert('Action failed: ' + e.message);
+  }
+});
+</script>
+{% endblock %}

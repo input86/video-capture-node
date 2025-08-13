@@ -1,6 +1,5 @@
 auth_tokens:
-  node01: "NODE01_ABC123"    # Avoid shell metacharacters like ! $
-  cam01: q1w2e3r4t5y6u7i8o9p0
+  cam01: "q1w2e3r4t5y6u7i8o9p0"
 storage:
   base_dir: "/home/pi/data"
   clips_subdir: "clips"

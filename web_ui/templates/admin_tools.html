@@ -1,0 +1,93 @@
+{% extends "layout.html" %}
+{% block title %}Admin Tools{% endblock %}
+{% block content %}
+<h1 class="mb-3">Admin Tools</h1>
+
+{% if not cameras or cameras|length == 0 %}
+  <div class="alert alert-info">No cameras found in <code>auth_tokens</code> of hub config.</div>
+{% endif %}
+
+<div class="row g-3">
+  {% for cam in cameras %}
+  {% set ep = endpoints.get(cam) %}
+  <div class="col-lg-6">
+    <div class="card">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <strong>{{ cam }}</strong>
+        <a class="btn btn-sm btn-outline-primary" href="/preview/{{ cam }}">Preview</a>
+      </div>
+      <div class="card-body">
+        <div class="small mb-2">
+          <div><span class="muted">SSH:</span> {{ ep.ssh_user or 'pi' }}@{{ ep.ssh_host or '—' }}</div>
+          <div><span class="muted">Config:</span> {{ ep.config_path or '/home/pi/camera_node/config.yaml' }}</div>
+          <div><span class="muted">Service:</span> {{ ep.service_name or 'camera-node' }}</div>
+        </div>
+        <div class="d-flex gap-2">
+          <button class="btn btn-outline-secondary btn-status" data-cam="{{ cam }}">Status</button>
+          <button class="btn btn-outline-warning btn-logs" data-cam="{{ cam }}">Logs</button>
+          <button class="btn btn-outline-primary btn-restart" data-cam="{{ cam }}">Restart</button>
+          <button class="btn btn-outline-success btn-backup" data-cam="{{ cam }}">Backup Config</button>
+        </div>
+        <pre class="mt-3 small border rounded p-2 bg-light" id="out-{{ cam }}" style="max-height:240px; overflow:auto;"></pre>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+<script>
+async function postJSON(url, body){
+  const r = await fetch(url, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body||{})});
+  const d = await r.json().catch(()=> ({}));
+  if(!r.ok || !d.ok){ throw new Error((d && (d.error||d.raw)) || r.statusText); }
+  return d;
+}
+function setOut(cam, text){ document.getElementById('out-'+cam).textContent = text; }
+
+for(const b of document.querySelectorAll('.btn-status')){
+  b.addEventListener('click', async ()=>{
+    const cam = b.dataset.cam;
+    try{ const d = await postJSON('/action/secure/node/status', {camera_id: cam}); setOut(cam, 'state: '+d.state); }
+    catch(e){ setOut(cam, 'ERROR: '+e.message); }
+  });
+}
+for(const b of document.querySelectorAll('.btn-logs')){
+  b.addEventListener('click', async ()=>{
+    const cam = b.dataset.cam;
+    try{ const d = await postJSON('/action/secure/node/logs', {camera_id: cam, lines: 120}); setOut(cam, d.log); }
+    catch(e){ setOut(cam, 'ERROR: '+e.message); }
+  });
+}
+for(const b of document.querySelectorAll('.btn-restart')){
+  b.addEventListener('click', async ()=>{
+    const cam = b.dataset.cam;
+    try{ const d = await postJSON('/action/secure/node/restart', {camera_id: cam}); setOut(cam, 'state: '+d.state); }
+    catch(e){ setOut(cam, 'ERROR: '+e.message); }
+  });
+}
+for(const b of document.querySelectorAll('.btn-backup')){
+  b.addEventListener('click', ()=>{
+    const cam = b.dataset.cam;
+    const a = document.createElement('a');
+    a.href = '#';
+    a.onclick = async (e)=>{
+      e.preventDefault();
+      try{
+        const res = await fetch('/action/secure/node/backup_config', {
+          method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({camera_id: cam})
+        });
+        if(!res.ok){ const t = await res.text(); setOut(cam, 'ERROR: '+t); return; }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const dl = document.createElement('a');
+        dl.href = url;
+        dl.download = cam+'_config.yaml';
+        dl.click();
+        URL.revokeObjectURL(url);
+      }catch(e){ setOut(cam, 'ERROR: '+e.message); }
+    };
+    a.click();
+  });
+}
+</script>
+{% endblock %}

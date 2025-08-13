@@ -1,0 +1,57 @@
+{% extends "layout.html" %}
+{% block title %}Nodes{% endblock %}
+{% block content %}
+<h1 class="mb-3">Nodes</h1>
+
+<div class="card">
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-hover table-sm mb-0">
+        <thead class="table-light">
+          <tr>
+            <th>Node</th>
+            <th>Last Heartbeat</th>
+            <th>Age</th>
+            <th>Status</th>
+            <th>Clock Skew</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for n in nodes %}
+          <tr>
+            <td><strong>{{ n.node_id }}</strong></td>
+            <td>{{ n.last_heartbeat|hb_fmt }}</td>
+            <td>
+              {% if n.seconds_ago is not none %}
+                {{ n.seconds_ago }}s
+              {% else %}—{% endif %}
+            </td>
+            <td>
+              {% if n.status == 'online' %}
+                <span class="badge bg-success">online</span>
+              {% elif n.status == 'stale' %}
+                <span class="badge bg-warning text-dark">stale</span>
+              {% else %}
+                <span class="badge bg-secondary">offline</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if n.skew_ahead and n.skew_ahead > 0 %}
+                <span class="text-danger">+{{ n.skew_ahead }}s</span>
+              {% else %}
+                <span class="text-muted">0s</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="5" class="text-center text-muted py-4">No nodes found.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="card-footer text-end">
+    <a class="btn btn-sm btn-outline-secondary" href="/nodes.csv">Download CSV</a>
+  </div>
+</div>
+{% endblock %}

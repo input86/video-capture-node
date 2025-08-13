@@ -1,0 +1,11 @@
+# /etc/systemd/system/hub-web-thumbs.timer
+[Unit]
+Description=Run Hub Web Admin thumbnail builder every 5 minutes
+
+[Timer]
+OnBootSec=2m
+OnUnitActiveSec=5m
+Unit=hub-web-thumbs.service
+
+[Install]
+WantedBy=timers.target

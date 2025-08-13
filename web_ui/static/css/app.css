@@ -1,0 +1,123 @@
+/* app.css — classic light theme with dark navbar
+   Place at: /home/pi/hub_web_admin/static/css/app.css */
+
+/* ---------- Base ---------- */
+html, body {
+  background: #f5f6f8; /* soft light gray */
+}
+.container {
+  padding-bottom: 3rem;
+}
+
+/* ---------- Navbar ---------- */
+.navbar {
+  background: #212529 !important; /* dark */
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+.navbar .navbar-brand,
+.navbar .nav-link,
+.navbar .navbar-text {
+  color: #ffffff !important;
+}
+.navbar .nav-link {
+  opacity: 0.85;
+}
+.navbar .nav-link.active,
+.navbar .nav-link:hover {
+  opacity: 1;
+  color: #ffffff !important;
+  text-decoration: none;
+}
+
+/* ---------- Cards ---------- */
+.card {
+  border: 1px solid #e5e7eb;
+  border-radius: .5rem;
+  box-shadow: 0 1px 2px rgba(0,0,0,.05);
+  background: #ffffff;
+}
+.card-header {
+  background: #f3f4f6;            /* subtle gray header strip */
+  border-bottom: 1px solid #e5e7eb;
+  font-weight: 600;
+}
+
+/* ---------- Tables ---------- */
+.table {
+  margin-bottom: 0;
+}
+.table td, .table th {
+  vertical-align: middle;
+}
+.table thead th {
+  white-space: nowrap;
+  background: #f8f9fb;             /* lighter head than body */
+  border-bottom-color: #e5e7eb;
+}
+.table-hover tbody tr:hover {
+  background: #f7faff;             /* faint hover blue */
+}
+
+/* ---------- Buttons ---------- */
+.btn {
+  border-radius: .5rem;
+}
+.btn-primary {
+  background-color: #0d6efd;
+  border-color: #0d6efd;
+}
+.btn-outline-primary {
+  color: #0d6efd;
+  border-color: #bcd3ff;
+}
+.btn-outline-primary:hover {
+  background: #eaf2ff;
+  border-color: #9fc2ff;
+}
+.btn-outline-secondary {
+  color: #4b5563;
+  border-color: #d1d5db;
+}
+.btn-outline-secondary:hover {
+  background: #f3f4f6;
+}
+
+/* ---------- Badges ---------- */
+.badge.bg-success { background-color: #16a34a !important; }
+.badge.bg-warning { background-color: #f59e0b !important; }
+.badge.bg-secondary { background-color: #6b7280 !important; }
+
+/* ---------- Forms ---------- */
+.form-control, .form-select {
+  border-radius: .5rem;
+  border-color: #d1d5db;
+}
+.form-control:focus, .form-select:focus {
+  border-color: #93c5fd;
+  box-shadow: 0 0 0 .2rem rgba(13,110,253,.15);
+}
+.form-text {
+  color: #6b7280;
+}
+
+/* ---------- Utilities ---------- */
+.muted { color: #6b7280; }
+pre {
+  background: #f8fafc;
+  border: 1px solid #e5e7eb;
+  border-radius: .5rem;
+  padding: .75rem .875rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: .92rem;
+  color: #111827;
+}
+
+/* ---------- Thumbnails on clips ---------- */
+img.img-fluid.border {
+  border-color: #e5e7eb !important;
+  background: #f8fafc;
+  border-radius: .5rem;
+}
+
+/* ---------- Table action column alignment ---------- */
+td.text-end .btn { margin-left: .25rem; }

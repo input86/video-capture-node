@@ -1,0 +1,147 @@
+{% extends "layout.html" %}
+{% block title %}Camera Settings{% endblock %}
+
+{% block content %}
+<h1 class="mb-3">Camera Settings</h1>
+
+<p class="text-muted">Values shown come from the node’s <code>config.yaml</code> when reachable; otherwise the last saved values on the hub.</p>
+
+{% for cam in cameras %}
+<div class="card mb-4">
+  <div class="card-header d-flex justify-content-between align-items-center">
+    <div>
+      <strong>{{ cam.camera_id }}</strong>
+      <span class="badge {% if cam.source == 'node' %}bg-success{% else %}bg-secondary{% endif %} ms-2">
+        {{ cam.source == 'node' and 'node' or 'hub' }}
+      </span>
+      {% if cam.node_error %}
+      <span class="text-danger small ms-2">({{ cam.node_error }})</span>
+      {% endif %}
+    </div>
+    <div>
+      <a class="btn btn-sm btn-outline-primary" href="/preview/{{ cam.camera_id }}">Preview</a>
+    </div>
+  </div>
+  <div class="card-body">
+    <form class="camera-form" data-camera="{{ cam.camera_id }}">
+      <div class="row g-3">
+        <div class="col-md-3">
+          <label class="form-label">Resolution</label>
+          <input type="text" class="form-control" name="resolution" value="{{ cam.resolution }}">
+          <div class="form-text">e.g. 1280x720, 1920x1080</div>
+        </div>
+        <div class="col-md-2">
+          <label class="form-label">FPS</label>
+          <input type="number" min="1" max="120" class="form-control" name="fps" value="{{ cam.fps }}">
+        </div>
+        <div class="col-md-2">
+          <label class="form-label">Bitrate (kbps)</label>
+          <input type="number" min="100" max="100000" class="form-control" name="bitrate_kbps" value="{{ cam.bitrate_kbps }}">
+          <div class="form-text">H.264 target bitrate</div>
+        </div>
+        <div class="col-md-2">
+          <label class="form-label">Rotation</label>
+          <select class="form-select" name="rotation">
+            {% for r in [0,90,180,270] %}
+            <option value="{{ r }}" {% if cam.rotation == r %}selected{% endif %}>{{ r }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">Clip Duration (s)</label>
+          <input type="number" min="2" max="600" class="form-control" name="clip_duration_s" value="{{ cam.clip_duration_s }}">
+        </div>
+      </div>
+
+      <hr>
+
+      <h6>Node Endpoint</h6>
+      {% set ep = endpoints[cam.camera_id] %}
+      <div class="row g-3">
+        <div class="col-md-3">
+          <label class="form-label">SSH Host</label>
+          <input type="text" class="form-control ep" name="ssh_host" value="{{ ep.ssh_host }}">
+        </div>
+        <div class="col-md-2">
+          <label class="form-label">SSH User</label>
+          <input type="text" class="form-control ep" name="ssh_user" value="{{ ep.ssh_user }}">
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">Config Path</label>
+          <input type="text" class="form-control ep" name="config_path" value="{{ ep.config_path }}">
+        </div>
+        <div class="col-md-3">
+          <label class="form-label">Service Name</label>
+          <input type="text" class="form-control ep" name="service_name" value="{{ ep.service_name }}">
+        </div>
+      </div>
+
+      <div class="mt-3 d-flex gap-2">
+        <button type="button" class="btn btn-primary btn-save">Save</button>
+        <button type="button" class="btn btn-secondary btn-save-endpoint">Save Endpoint</button>
+        <button type="button" class="btn btn-outline-success btn-push">Push to Node & Restart</button>
+        <button type="button" class="btn btn-outline-info btn-import">Import From Node</button>
+      </div>
+
+      <div class="mt-2">
+        <small class="text-muted">Last updated: {{ cam.updated_at and cam.updated_at|date_fmt or "—" }}</small>
+      </div>
+    </form>
+  </div>
+</div>
+{% endfor %}
+
+<script>
+async function postJSON(url, body) {
+  const res = await fetch(url, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body || {})});
+  const data = await res.json().catch(()=> ({}));
+  if(!res.ok || !data.ok){ throw new Error((data && (data.error||data.raw)) || res.statusText); }
+  return data;
+}
+
+for (const form of document.querySelectorAll('.camera-form')) {
+  const cam = form.dataset.camera;
+
+  form.querySelector('.btn-save').addEventListener('click', async ()=>{
+    try {
+      const payload = {
+        camera_id: cam,
+        resolution: form.querySelector('[name=resolution]').value.trim(),
+        fps: parseInt(form.querySelector('[name=fps]').value,10),
+        bitrate_kbps: parseInt(form.querySelector('[name=bitrate_kbps]').value,10),
+        rotation: parseInt(form.querySelector('[name=rotation]').value,10),
+        clip_duration_s: parseInt(form.querySelector('[name=clip_duration_s]').value,10),
+      };
+      await postJSON('/action/secure/cameras/save', payload);
+      alert('Saved on hub.');
+    } catch(e){ alert('Save failed: '+e.message); }
+  });
+
+  form.querySelector('.btn-save-endpoint').addEventListener('click', async ()=>{
+    try {
+      const payload = {
+        camera_id: cam,
+        ssh_host: form.querySelector('[name=ssh_host]').value.trim(),
+        ssh_user: form.querySelector('[name=ssh_user]').value.trim(),
+        config_path: form.querySelector('[name=config_path]').value.trim(),
+        service_name: form.querySelector('[name=service_name]').value.trim(),
+      };
+      await postJSON('/action/secure/cameras/save_endpoint', payload);
+      alert('Endpoint saved.');
+    } catch(e){ alert('Endpoint save failed: '+e.message); }
+  });
+
+  form.querySelector('.btn-push').addEventListener('click', async ()=>{
+    try { await postJSON('/action/secure/cameras/push', {camera_id: cam}); alert('Pushed to node and restarted.'); }
+    catch(e){ alert('Push failed: '+e.message); }
+  });
+
+  form.querySelector('.btn-import').addEventListener('click', async ()=>{
+    try { await postJSON('/action/secure/cameras/import_from_node', {camera_id: cam}); location.reload(); }
+    catch(e){ alert('Import failed: '+e.message); }
+  });
+}
+</script>
+
+{% endblock %}
+

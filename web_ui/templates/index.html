@@ -1,0 +1,80 @@
+{% extends "layout.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<h1 class="mb-3">Dashboard</h1>
+
+<div class="row g-3 mb-3">
+  <div class="col-md-3">
+    <div class="card">
+      <div class="card-body">
+        <div class="text-muted">Nodes Online</div>
+        <div class="display-6">{{ counts.online }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card">
+      <div class="card-body">
+        <div class="text-muted">Nodes Stale</div>
+        <div class="display-6">{{ counts.stale }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card">
+      <div class="card-body">
+        <div class="text-muted">Nodes Offline</div>
+        <div class="display-6">{{ counts.offline }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card">
+      <div class="card-body">
+        <div class="text-muted">Storage Free</div>
+        <div class="display-6">{{ '%.1f'|format(fs.pct_free) }}%</div>
+        <div class="small muted">Total {{ fs.total|human_bytes }} • Avail {{ fs.avail|human_bytes }}</div>
+        {% if fs.pct_free < min_free_percent %}
+          <div class="mt-1 badge bg-danger">Below min free threshold ({{ '%.1f'|format(min_free_percent) }}%)</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header"><strong>Recent Clips</strong></div>
+  <div class="card-body p-0">
+    <div class="table-responsive">
+      <table class="table table-sm mb-0 align-middle">
+        <thead class="table-light">
+          <tr>
+            <th>Thumbnail</th>
+            <th>Clip</th>
+            <th>Size</th>
+            <th>Modified</th>
+            <th class="text-end">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for c in clips %}
+          <tr>
+            <td style="width:140px">
+              <img src="/thumb/{{ c.rel[:-4] }}" alt="thumb" class="img-fluid rounded border">
+            </td>
+            <td><code>{{ c.rel }}</code></td>
+            <td>{{ c.size|human_bytes }}</td>
+            <td>{{ c.mtime|date_fmt }}</td>
+            <td class="text-end">
+              <a class="btn btn-sm btn-outline-primary" href="/download/{{ c.rel }}">Download</a>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="5" class="text-center text-muted py-4">No clips found.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

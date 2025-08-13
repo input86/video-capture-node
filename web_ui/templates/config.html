@@ -1,0 +1,50 @@
+{% extends "layout.html" %}
+{% block title %}Config{% endblock %}
+{% block content %}
+<h1 class="mb-3">Hub Config</h1>
+
+<div class="row g-3">
+  <div class="col-lg-8">
+    <div class="card">
+      <div class="card-header"><strong>config.yaml (redacted)</strong></div>
+      <div class="card-body">
+        <pre class="mb-0" style="white-space: pre-wrap;">{{ cfg_text }}</pre>
+      </div>
+      <div class="card-footer d-flex justify-content-between">
+        <div>
+          <a class="btn btn-sm btn-outline-secondary" href="/config/download/redacted">Download Redacted</a>
+          <a class="btn btn-sm btn-outline-secondary" href="/config/download">Download Raw</a>
+        </div>
+        <button id="btnReload" class="btn btn-sm btn-primary">Reload</button>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-4">
+    <div class="card">
+      <div class="card-header"><strong>Validation</strong></div>
+      <div class="card-body">
+        {% if issues and issues|length %}
+          <ul class="mb-0">
+            {% for i in issues %}
+              <li class="{{ 'text-danger' if i.level=='error' else 'text-warning' }}">{{ i.level|upper }}: {{ i.msg }}</li>
+            {% endfor %}
+          </ul>
+        {% else %}
+          <div class="text-success">No issues detected.</div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+document.getElementById('btnReload').addEventListener('click', async ()=>{
+  try{
+    const r = await fetch('/config/reload', {method:'POST'});
+    const d = await r.json();
+    if(!d.ok) throw new Error(d.error||'reload failed');
+    location.reload();
+  }catch(e){ alert(e.message); }
+});
+</script>
+{% endblock %}
