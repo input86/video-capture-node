@@ -297,37 +297,33 @@ def toast(msg: str, color: str = "white", timeout_ms: int = 2500):
     if timeout_ms:
         root.after(timeout_ms, lambda: toast_label.config(text=""))
 
-# Top area
+# Top area (leave toast present, original paddings)
 title = tk.Label(root, text="Hub Server Status", font=("Arial", 24, "bold"), fg="white", bg="black")
-title.pack(pady=(6,2))
+title.pack(pady=(6, 2))
 
 toast_label = tk.Label(root, text="", font=("Arial", 12), fg="white", bg="black")
-toast_label.pack(pady=(0,4))
+toast_label.pack(pady=(0, 4))
 
 storage_label = tk.Label(root, text="", font=("Arial", 16), fg="white", bg="black")
-storage_label.pack(pady=(0,6))
+storage_label.pack(pady=(0, 6))
 
-# Node list area
-frame = tk.Frame(root, bg="black")
-frame.pack(fill="both", expand=True, padx=10, pady=6)
-
-# Controls (3 buttons)
+# Controls (3 buttons) — above the node list
 controls = tk.Frame(root, bg="black")
-controls.pack(fill="x", padx=10, pady=(2,6))
+controls.pack(fill="x", padx=10, pady=(2, 6))
 
 btn_prune = tk.Button(
     controls, text="Prune DB", font=("Arial", 14, "bold"),
     fg="white", bg="#2563eb", activebackground="#1e40af",
     padx=12, pady=6, command=prune_db
 )
-btn_prune.pack(side="left", padx=(0,8))
+btn_prune.pack(side="left", padx=(0, 8))
 
 btn_reindex = tk.Button(
     controls, text="Reindex DB", font=("Arial", 14, "bold"),
     fg="white", bg="#0ea5e9", activebackground="#0284c7",
     padx=12, pady=6, command=reindex_db
 )
-btn_reindex.pack(side="left", padx=(0,8))
+btn_reindex.pack(side="left", padx=(0, 8))
 
 btn_clean = tk.Button(
     controls, text="Clean All Files…", font=("Arial", 14, "bold"),
@@ -336,8 +332,57 @@ btn_clean = tk.Button(
 )
 btn_clean.pack(side="left")
 
+# Scrollable Nodes Section (canvas + scrollbar)
+nodes_section = tk.Frame(root, bg="black")
+nodes_section.pack(fill="both", expand=True, padx=10, pady=(0, 6))
+
+canvas = tk.Canvas(nodes_section, bg="black", highlightthickness=0)
+vbar = tk.Scrollbar(nodes_section, orient="vertical", command=canvas.yview)
+canvas.configure(yscrollcommand=vbar.set)
+
+canvas.pack(side="left", fill="both", expand=True)
+vbar.pack(side="right", fill="y")
+
+nodes_frame = tk.Frame(canvas, bg="black")
+nodes_window_id = canvas.create_window((0, 0), window=nodes_frame, anchor="nw")
+
+def _on_nodes_frame_configure(event):
+    # Update scrollable region to match inner frame size
+    canvas.configure(scrollregion=canvas.bbox("all"))
+
+def _on_nodes_section_configure(event):
+    # Keep inner frame width equal to visible canvas width
+    canvas.itemconfig(nodes_window_id, width=event.width)
+
+nodes_frame.bind("<Configure>", _on_nodes_frame_configure)
+nodes_section.bind("<Configure>", _on_nodes_section_configure)
+
+# Mouse & touch-friendly scrolling
+def _on_mousewheel(event):
+    if hasattr(event, "delta") and event.delta != 0:
+        direction = -1 if event.delta > 0 else 1
+        canvas.yview_scroll(direction, "units")
+    else:
+        if getattr(event, "num", None) == 4:
+            canvas.yview_scroll(-1, "units")
+        elif getattr(event, "num", None) == 5:
+            canvas.yview_scroll(1, "units")
+
+def _on_drag_start(event):
+    canvas.scan_mark(event.x, event.y)
+
+def _on_drag_move(event):
+    canvas.scan_dragto(event.x, event.y, gain=1)
+
+canvas.bind_all("<MouseWheel>", _on_mousewheel)   # Windows/macOS
+canvas.bind_all("<Button-4>", _on_mousewheel)     # X11 up
+canvas.bind_all("<Button-5>", _on_mousewheel)     # X11 down
+canvas.bind("<Button-1>", _on_drag_start)
+canvas.bind("<B1-Motion>", _on_drag_move)
+
+# Footer
 footer = tk.Label(root, text="/api/v1/heartbeat · /api/v1/clips", font=("Arial", 12), fg="#888", bg="black")
-footer.pack(pady=(0,6))
+footer.pack(pady=(0, 6))
 
 def render_node_row(parent, node: Dict):
     node_id = node.get("node_id") or "—"
@@ -380,7 +425,7 @@ def render_node_row(parent, node: Dict):
 
     det_label = tk.Label(row, text="   ·   ".join(details), font=("Arial", 12), fg="#bbbbbb", bg="black",
                          wraplength=460, justify="left")
-    det_label.pack(anchor="w", pady=(3,0))
+    det_label.pack(anchor="w", pady=(3, 0))
 
 def refresh():
     # Storage banner
@@ -390,23 +435,23 @@ def refresh():
     else:
         storage_label.config(text=f"Storage OK: {pct:.1f}% free", fg="lime")
 
-    # Clear list
-    for w in frame.winfo_children():
+    # Clear only node rows
+    for w in nodes_frame.winfo_children():
         w.destroy()
 
     # Nodes
     try:
         rows = fetch_nodes()
     except Exception as e:
-        tk.Label(frame, text=f"DB error: {e}", font=("Arial", 16), fg="red", bg="black").pack(anchor="w")
+        tk.Label(nodes_frame, text=f"DB error: {e}", font=("Arial", 16), fg="red", bg="black").pack(anchor="w")
         root.after(2000, refresh)
         return
 
     if not rows:
-        tk.Label(frame, text="No nodes registered yet…", font=("Arial", 16), fg="gray", bg="black").pack(anchor="w")
+        tk.Label(nodes_frame, text="No nodes registered yet…", font=("Arial", 16), fg="gray", bg="black").pack(anchor="w")
     else:
         for node in rows:
-            render_node_row(frame, node)
+            render_node_row(nodes_frame, node)
 
     root.after(2000, refresh)
 

@@ -3,15 +3,50 @@
 
 {% block content %}
 <h1 class="mb-3">Camera Settings</h1>
-<p class="text-muted">Values shown come from the node’s <code>config.yaml</code> when reachable; otherwise the last saved values on the hub.</p>
+<p class="text-muted">
+  Values shown come from the node’s <code>config.yaml</code> when reachable; otherwise the last saved values on the hub.
+</p>
+
+{# Robust handling when 'profiles' is not provided by backend #}
+{% set has_profiles = (profiles is defined and profiles) %}
+{% if has_profiles %}
+  {% set PROFILE_KEYS = profiles.keys() %}
+{% else %}
+  {% set PROFILE_KEYS = ['balanced_1080p30','action_1080p60','storage_saver_720p30','night_low_noise_1080p30','smooth_720p60'] %}
+{% endif %}
 
 <div class="accordion" id="camsAccordion">
   {% for cam in cameras %}
   {% set cam_id = cam.camera_id %}
-  {% set acc_id = 'acc-' ~ cam_id %}
   {% set hdr_id = 'hdr-' ~ cam_id %}
   {% set col_id = 'col-' ~ cam_id %}
   {% set ep = endpoints[cam_id] %}
+  {% set cam_profile = cam.profile or 'storage_saver_720p30' %}
+  {% set prof = (has_profiles and profiles[cam_profile]) or None %}
+
+  {# Effective display fallbacks #}
+  {% set eff_res = (prof and (prof.resolution ~ '')) 
+                   or (cam.effective and cam.effective.resolution) 
+                   or '1280x720' %}
+  {% set eff_fps = (prof and prof.fps) 
+                   or (cam.effective and cam.effective.fps) 
+                   or 30 %}
+  {% set eff_gop = (prof and prof.gop) 
+                   or (cam.effective and cam.effective.gop) 
+                   or 60 %}
+  {% set eff_h264_profile = (prof and prof.h264_profile) 
+                            or (cam.effective and cam.effective.h264_profile) 
+                            or 'high' %}
+  {% set eff_h264_level = (prof and prof.h264_level) 
+                          or (cam.effective and cam.effective.h264_level) 
+                          or '4.0' %}
+  {% set eff_bitrate = cam.bitrate_kbps 
+                       or (prof and prof.default_bitrate_kbps) 
+                       or 7000 %}
+  {% set eff_rotation = (cam.rotation is not none and cam.rotation) or 0 %}
+  {% set eff_duration = cam.clip_duration_s 
+                        or (cam.recording and cam.recording.duration_s) 
+                        or 5 %}
 
   <div class="accordion-item">
     <h2 class="accordion-header" id="{{ hdr_id }}">
@@ -27,10 +62,11 @@
         {% endif %}
       </button>
     </h2>
+
     <div id="{{ col_id }}" class="accordion-collapse collapse" aria-labelledby="{{ hdr_id }}" data-bs-parent="#camsAccordion">
       <div class="accordion-body">
         <!-- ACTIONS (top) -->
-        <div class="d-flex flex-wrap gap-2 mb-3">
+        <div class="d-flex flex-wrap gap-2 mb-3 align-items-center">
           <a class="btn btn-sm btn-outline-primary" href="/preview/{{ cam_id }}">Preview</a>
           <button class="btn btn-sm btn-primary btn-save" data-cam="{{ cam_id }}">Save</button>
           <button class="btn btn-sm btn-secondary btn-save-endpoint" data-cam="{{ cam_id }}">Save Endpoint</button>
@@ -42,36 +78,89 @@
         <!-- SETTINGS FORM -->
         <form class="camera-form" data-camera="{{ cam_id }}">
           <div class="row g-3">
-            <div class="col-md-3">
-              <label class="form-label">Resolution</label>
-              <input type="text" class="form-control" name="resolution" value="{{ cam.resolution }}">
-              <div class="form-text">e.g. 1280x720, 1920x1080</div>
+            <!-- Profile -->
+            <div class="col-md-4">
+              <label class="form-label">Profile</label>
+              <select class="form-select profile-select" name="profile">
+                {% for key in PROFILE_KEYS %}
+                  <option value="{{ key }}" {% if cam_profile == key %}selected{% endif %}>
+                    {{ key }}
+                  </option>
+                {% endfor %}
+              </select>
+              <div class="form-text profile-help">
+                <span class="text-nowrap"><strong>Resolution:</strong> <span data-eff="res">{{ eff_res }}</span></span> ·
+                <span class="text-nowrap"><strong>FPS:</strong> <span data-eff="fps">{{ eff_fps }}</span></span> ·
+                <span class="text-nowrap"><strong>GOP:</strong> <span data-eff="gop">{{ eff_gop }}</span></span> ·
+                <span class="text-nowrap"><strong>H.264:</strong> <span data-eff="h264">{{ eff_h264_profile }}/{{ eff_h264_level }}</span></span>
+              </div>
             </div>
-            <div class="col-md-2">
-              <label class="form-label">FPS</label>
-              <input type="number" min="1" max="120" class="form-control" name="fps" value="{{ cam.fps }}">
-            </div>
-            <div class="col-md-2">
+
+            <!-- Bitrate -->
+            <div class="col-md-4">
               <label class="form-label">Bitrate (kbps)</label>
-              <input type="number" min="100" max="100000" class="form-control" name="bitrate_kbps" value="{{ cam.bitrate_kbps }}">
-              <div class="form-text">H.264 target bitrate</div>
+              <div class="d-flex align-items-center gap-2">
+                <input type="number" min="100" max="100000" class="form-control bitrate-input" name="bitrate_kbps" value="{{ eff_bitrate }}">
+              </div>
+              <div class="form-text">
+                Default:
+                <span data-prof="default_bitrate">
+                  {{ (prof and prof.default_bitrate_kbps) or eff_bitrate }}
+                </span> kbps ·
+                Recommended:
+                <span data-prof="range">
+                  {% if prof and prof.recommended_bitrate_kbps %}
+                    {{ prof.recommended_bitrate_kbps[0] }}–{{ prof.recommended_bitrate_kbps[1] }}
+                  {% else %}
+                    6000–10000
+                  {% endif %}
+                </span> kbps
+              </div>
             </div>
+
+            <!-- Rotation -->
             <div class="col-md-2">
               <label class="form-label">Rotation</label>
               <select class="form-select" name="rotation">
                 {% for r in [0,90,180,270] %}
-                <option value="{{ r }}" {% if cam.rotation == r %}selected{% endif %}>{{ r }}</option>
+                <option value="{{ r }}" {% if eff_rotation == r %}selected{% endif %}>{{ r }}</option>
                 {% endfor %}
               </select>
+              <div class="form-text">Requires service restart</div>
             </div>
-            <div class="col-md-3">
+
+            <!-- Duration -->
+            <div class="col-md-2">
               <label class="form-label">Clip Duration (s)</label>
-              <input type="number" min="2" max="600" class="form-control" name="clip_duration_s" value="{{ cam.clip_duration_s }}">
+              <input type="number" min="2" max="600" class="form-control" name="clip_duration_s" value="{{ eff_duration }}">
+              <div class="form-text">Requires service restart</div>
+            </div>
+          </div>
+
+          <!-- Effective Settings Panel -->
+          <div class="mt-3 p-3 border rounded bg-light">
+            <div class="row gy-2">
+              <div class="col-12 col-md-8">
+                <div class="small text-muted mb-1">Effective Settings</div>
+                <div class="d-flex flex-wrap gap-3">
+                  <div><strong>Res×FPS:</strong> <span data-eff="res">{{ eff_res }}</span> @ <span data-eff="fps">{{ eff_fps }}</span></div>
+                  <div><strong>GOP:</strong> <span data-eff="gop">{{ eff_gop }}</span></div>
+                  <div><strong>Bitrate:</strong> <span data-eff="bitrate">{{ eff_bitrate }}</span> kbps</div>
+                  <div><strong>Rotation:</strong> <span data-eff="rotation">{{ eff_rotation }}</span>°</div>
+                  <div><strong>Duration:</strong> <span data-eff="duration">{{ eff_duration }}</span>s</div>
+                </div>
+              </div>
+              <div class="col-12 col-md-4">
+                <div class="small text-muted mb-1">Estimates</div>
+                <div><strong>Per clip:</strong> <span data-est="per_clip">—</span></div>
+                <div><strong>Per hour:</strong> <span data-est="per_hour">—</span></div>
+              </div>
             </div>
           </div>
 
           <hr>
 
+          <!-- Node Endpoint (unchanged) -->
           <h6 class="mb-2">Node Endpoint</h6>
           <div class="row g-3">
             <div class="col-md-3">
@@ -98,11 +187,81 @@
   </div>
   {% endfor %}
 </div>
-
 {% endblock %}
 
 {% block scripts %}
 <script>
+/* Make JS tolerant if backend didn't pass profiles */
+const PROFILES = {% if has_profiles %}{{ profiles|tojson|safe }}{% else %}{}{% endif %};
+
+function kbpsToMBps(kbps){ return (kbps/8) / 1000; } // 1000-based MB
+function sizePerClipMB(kbps, durationS){ return (kbpsToMBps(kbps) * durationS); }
+function sizePerHourGB(kbps){ const mbps = kbpsToMBps(kbps); return (mbps * 3600) / 1000; } // GB
+
+function pickProfile(key){
+  if (PROFILES && PROFILES[key]) return PROFILES[key];
+  // Fallback summaries if profiles not provided by backend
+  const defaults = {
+    balanced_1080p30: {resolution:"1920x1080", fps:30, gop:60, h264_profile:"high", h264_level:"4.1", default_bitrate_kbps:14000, recommended_bitrate_kbps:[12000,18000]},
+    action_1080p60:   {resolution:"1920x1080", fps:60, gop:120, h264_profile:"high", h264_level:"4.2", default_bitrate_kbps:24000, recommended_bitrate_kbps:[22000,28000]},
+    storage_saver_720p30:{resolution:"1280x720", fps:30, gop:60, h264_profile:"high", h264_level:"4.0", default_bitrate_kbps:7000, recommended_bitrate_kbps:[6000,10000]},
+    night_low_noise_1080p30:{resolution:"1920x1080", fps:30, gop:60, h264_profile:"high", h264_level:"4.1", default_bitrate_kbps:18000, recommended_bitrate_kbps:[16000,22000]},
+    smooth_720p60:    {resolution:"1280x720", fps:60, gop:120, h264_profile:"high", h264_level:"4.1", default_bitrate_kbps:12000, recommended_bitrate_kbps:[10000,16000]},
+  };
+  return defaults[key] || defaults['storage_saver_720p30'];
+}
+
+function updateProfileUI(form){
+  const profKey = form.querySelector('[name=profile]').value || 'storage_saver_720p30';
+  const prof = pickProfile(profKey);
+
+  // Effective fields
+  form.querySelectorAll('[data-eff="res"]').forEach(el => el.textContent = prof.resolution);
+  form.querySelectorAll('[data-eff="fps"]').forEach(el => el.textContent = prof.fps);
+  form.querySelectorAll('[data-eff="gop"]').forEach(el => el.textContent = prof.gop);
+  form.querySelectorAll('[data-eff="h264"]').forEach(el => el.textContent = `${prof.h264_profile}/${prof.h264_level}`);
+
+  // Bitrate helpers
+  const bitrateInput = form.querySelector('[name=bitrate_kbps]');
+  const defBR = parseInt(prof.default_bitrate_kbps,10);
+  const minBR = parseInt(prof.recommended_bitrate_kbps[0],10);
+  const maxBR = parseInt(prof.recommended_bitrate_kbps[1],10);
+  const cur = parseInt(bitrateInput.value,10);
+
+  if (isNaN(cur) || cur <= 0) {
+    bitrateInput.value = defBR;
+  } else {
+    if (cur < minBR) bitrateInput.value = minBR;
+    if (cur > maxBR) bitrateInput.value = maxBR;
+  }
+  const defaultSpan = form.querySelector('[data-prof="default_bitrate"]');
+  const rangeSpan = form.querySelector('[data-prof="range"]');
+  if (defaultSpan) defaultSpan.textContent = defBR;
+  if (rangeSpan) rangeSpan.textContent = `${minBR}–${maxBR}`;
+
+  // Rotation & duration effective
+  const rot = parseInt(form.querySelector('[name=rotation]').value,10);
+  const dur = parseInt(form.querySelector('[name=clip_duration_s]').value,10);
+  const effRot = isNaN(rot)? 0 : rot;
+  const effDur = isNaN(dur)? 5 : dur;
+  const effBitrateEl = form.querySelector('[data-eff="bitrate"]');
+  const effRotationEl = form.querySelector('[data-eff="rotation"]');
+  const effDurationEl = form.querySelector('[data-eff="duration"]');
+
+  if (effBitrateEl) effBitrateEl.textContent = bitrateInput.value;
+  if (effRotationEl) effRotationEl.textContent = effRot;
+  if (effDurationEl) effDurationEl.textContent = effDur;
+
+  // Estimates
+  const br = parseInt(bitrateInput.value,10) || defBR;
+  const perClip = sizePerClipMB(br, effDur);
+  const perHour = sizePerHourGB(br);
+  const estClipEl = form.querySelector('[data-est="per_clip"]');
+  const estHourEl = form.querySelector('[data-est="per_hour"]');
+  if (estClipEl) estClipEl.textContent = `${perClip.toFixed(2)} MB`;
+  if (estHourEl) estHourEl.textContent = `${perHour.toFixed(2)} GB/hr`;
+}
+
 async function postJSON(url, body) {
   const res = await fetch(url, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body || {})});
   const data = await res.json().catch(()=> ({}));
@@ -110,7 +269,21 @@ async function postJSON(url, body) {
   return data;
 }
 
-// Delegate clicks so it works inside accordion panels
+// Initialize all forms
+document.querySelectorAll('form.camera-form').forEach((form)=>{
+  updateProfileUI(form);
+});
+
+// Live updates
+document.addEventListener('input', (ev)=>{
+  const form = ev.target.closest('form.camera-form');
+  if(!form) return;
+  if (['profile','bitrate_kbps','rotation','clip_duration_s'].includes(ev.target.name)){
+    updateProfileUI(form);
+  }
+});
+
+// Delegate button clicks (unchanged actions)
 document.addEventListener('click', async (ev) => {
   const btn = ev.target.closest('.btn-save, .btn-save-endpoint, .btn-push, .btn-import');
   if(!btn) return;
@@ -123,8 +296,7 @@ document.addEventListener('click', async (ev) => {
     if (btn.classList.contains('btn-save')) {
       const payload = {
         camera_id: cam,
-        resolution: form.querySelector('[name=resolution]').value.trim(),
-        fps: parseInt(form.querySelector('[name=fps]').value,10),
+        profile: form.querySelector('[name=profile]').value,
         bitrate_kbps: parseInt(form.querySelector('[name=bitrate_kbps]').value,10),
         rotation: parseInt(form.querySelector('[name=rotation]').value,10),
         clip_duration_s: parseInt(form.querySelector('[name=clip_duration_s]').value,10),

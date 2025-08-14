@@ -54,6 +54,41 @@ HB_STALE  = int(os.environ.get("HB_STALE_SEC", "30"))
 
 app = Flask(__name__)
 
+# --------- Profiles catalog (server-side source of truth for UI & validation) ---------
+PROFILES: Dict[str, Dict[str, Any]] = {
+    "balanced_1080p30": {
+        "resolution": "1920x1080", "fps": 30, "gop": 60,
+        "h264_profile": "high", "h264_level": "4.1",
+        "default_bitrate_kbps": 14000, "recommended_bitrate_kbps": [12000, 18000],
+        "default_rotation": 0
+    },
+    "action_1080p60": {
+        "resolution": "1920x1080", "fps": 60, "gop": 120,
+        "h264_profile": "high", "h264_level": "4.2",
+        "default_bitrate_kbps": 24000, "recommended_bitrate_kbps": [22000, 28000],
+        "default_rotation": 0
+    },
+    "storage_saver_720p30": {
+        "resolution": "1280x720", "fps": 30, "gop": 60,
+        "h264_profile": "high", "h264_level": "4.0",
+        "default_bitrate_kbps": 7000, "recommended_bitrate_kbps": [6000, 10000],
+        "default_rotation": 0
+    },
+    "night_low_noise_1080p30": {
+        "resolution": "1920x1080", "fps": 30, "gop": 60,
+        "h264_profile": "high", "h264_level": "4.1",
+        "default_bitrate_kbps": 18000, "recommended_bitrate_kbps": [16000, 22000],
+        "default_rotation": 0
+    },
+    "smooth_720p60": {
+        "resolution": "1280x720", "fps": 60, "gop": 120,
+        "h264_profile": "high", "h264_level": "4.1",
+        "default_bitrate_kbps": 12000, "recommended_bitrate_kbps": [10000, 16000],
+        "default_rotation": 0
+    },
+}
+DEFAULT_PROFILE = "storage_saver_720p30"
+
 # Pass auth badge (if any) from Nginx basic auth
 @app.context_processor
 def inject_admin_user():
@@ -79,6 +114,18 @@ def get_columns(table: str):
         cur = db.cursor()
         return cur.execute(f"PRAGMA table_info({table});").fetchall()
 
+def ensure_column(table: str, column: str, coltype: str) -> None:
+    try:
+        cols = [r[1] for r in get_columns(table)]
+        if column not in cols:
+            with db_conn() as db:
+                cur = db.cursor()
+                cur.execute(f'ALTER TABLE {table} ADD COLUMN {column} {coltype};')
+                db.commit()
+    except Exception:
+        # Non-fatal: if something goes wrong here we'll just proceed
+        pass
+
 def init_db():
     with db_conn() as db:
         cur = db.cursor()
@@ -103,6 +150,8 @@ def init_db():
             updated_at REAL
         );""")
         db.commit()
+    # NEW: add 'profile' column if missing (non-breaking)
+    ensure_column("camera_settings", "profile", "TEXT")
 
 # -------------------- Misc helpers --------------------
 
@@ -609,63 +658,108 @@ def config_download_redacted():
     resp.headers["Content-Disposition"] = 'attachment; filename="config.redacted.yaml"'
     return resp
 
-# -------------------- CAMERA SETTINGS (recording only) --------------------
+# -------------------- CAMERA SETTINGS (profile-based) --------------------
 
 def list_camera_ids() -> List[str]:
     toks = hub_cfg.get("auth_tokens", {}) or {}
     ids = sorted(toks.keys())
     return [i for i in ids if i.lower().startswith("cam") or i.lower().startswith("node")]
 
+def _profile_to_res_fps(profile: str) -> Tuple[str, int]:
+    p = PROFILES.get(profile) or PROFILES[DEFAULT_PROFILE]
+    return p["resolution"], int(p["fps"])
+
+def _clamp_bitrate_for_profile(profile: str, br: Optional[int]) -> int:
+    p = PROFILES.get(profile) or PROFILES[DEFAULT_PROFILE]
+    default_br = int(p["default_bitrate_kbps"])
+    lo, hi = [int(x) for x in p["recommended_bitrate_kbps"]]
+    if br is None:
+        return default_br
+    try:
+        br = int(br)
+    except Exception:
+        return default_br
+    return max(lo, min(hi, br))
+
 def get_camera_settings(camera_id: str) -> Dict[str, Any]:
+    # Ensure schema up to date
+    ensure_column("camera_settings", "profile", "TEXT")
     with db_conn() as db:
         cur = db.cursor()
+        # Try selecting profile as well (it may be NULL if old row)
         cur.execute("""
-            SELECT camera_id, resolution, fps, bitrate_kbps, rotation, clip_duration_s, updated_at
+            SELECT camera_id, resolution, fps, bitrate_kbps, rotation, clip_duration_s, updated_at,
+                   profile
             FROM camera_settings WHERE camera_id = ?;
         """, (camera_id,))
         row = cur.fetchone()
         if not row:
+            # default row using DEFAULT_PROFILE
+            res, fps = _profile_to_res_fps(DEFAULT_PROFILE)
             return {
                 "camera_id": camera_id,
-                "resolution": "1920x1080",
-                "fps": 15,
-                "bitrate_kbps": 4000,
+                "profile": DEFAULT_PROFILE,
+                "resolution": res,
+                "fps": fps,
+                "bitrate_kbps": PROFILES[DEFAULT_PROFILE]["default_bitrate_kbps"],
                 "rotation": 0,
-                "clip_duration_s": 10,
+                "clip_duration_s": 5,
                 "updated_at": None
             }
+        # row exists
+        profile = row[7] if len(row) > 7 and row[7] else DEFAULT_PROFILE
+        # If resolution/fps are missing, derive from profile for compatibility
+        res = row[1] or _profile_to_res_fps(profile)[0]
+        fps = int(row[2]) if row[2] is not None else _profile_to_res_fps(profile)[1]
         return {
             "camera_id": row[0],
-            "resolution": row[1],
-            "fps": int(row[2]),
-            "bitrate_kbps": int(row[3]),
-            "rotation": int(row[4]),
-            "clip_duration_s": int(row[5]) if row[5] is not None else 10,
+            "profile": profile,
+            "resolution": res,
+            "fps": int(fps),
+            "bitrate_kbps": int(row[3]) if row[3] is not None else PROFILES[profile]["default_bitrate_kbps"],
+            "rotation": int(row[4]) if row[4] is not None else 0,
+            "clip_duration_s": int(row[5]) if row[5] is not None else 5,
             "updated_at": row[6],
         }
 
 def upsert_camera_settings(payload: Dict[str, Any]) -> None:
     now = datetime.now(timezone.utc).timestamp()
+    cam_id = payload["camera_id"]
+    profile = payload.get("profile") or DEFAULT_PROFILE
+    if profile not in PROFILES:
+        profile = DEFAULT_PROFILE
+    # normalize fields
+    br = _clamp_bitrate_for_profile(profile, payload.get("bitrate_kbps"))
+    try:
+        rot = int(payload.get("rotation", 0))
+    except Exception:
+        rot = 0
+    if rot not in (0,90,180,270):
+        rot = 0
+    try:
+        dur = int(payload.get("clip_duration_s", 5))
+    except Exception:
+        dur = 5
+    dur = max(2, min(600, dur))
+
+    # backfill res/fps for compatibility storage
+    res, fps = _profile_to_res_fps(profile)
+
     with db_conn() as db:
         cur = db.cursor()
         cur.execute("""
-            INSERT INTO camera_settings (camera_id, resolution, fps, bitrate_kbps, rotation, clip_duration_s, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO camera_settings (camera_id, resolution, fps, bitrate_kbps, rotation, clip_duration_s, updated_at, profile)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(camera_id) DO UPDATE SET
               resolution=excluded.resolution,
               fps=excluded.fps,
               bitrate_kbps=excluded.bitrate_kbps,
               rotation=excluded.rotation,
               clip_duration_s=excluded.clip_duration_s,
-              updated_at=excluded.updated_at;
+              updated_at=excluded.updated_at,
+              profile=excluded.profile;
         """, (
-            payload["camera_id"],
-            payload.get("resolution"),
-            int(payload.get("fps", 15)),
-            int(payload.get("bitrate_kbps", 4000)),
-            int(payload.get("rotation", 0)),
-            int(payload.get("clip_duration_s", 10)),
-            now
+            cam_id, res, int(fps), int(br), int(rot), int(dur), now, profile
         ))
         db.commit()
 
@@ -718,6 +812,18 @@ def upsert_camera_endpoint(payload: Dict[str, Any]) -> None:
         ))
         db.commit()
 
+def _infer_profile_from_legacy(resolution: str, fps: int) -> str:
+    key = None
+    # Normalize inputs
+    res = (resolution or "").lower().strip()
+    try: fps_i = int(fps)
+    except Exception: fps_i = 30
+    for name, p in PROFILES.items():
+        if p["resolution"].lower() == res and int(p["fps"]) == fps_i:
+            key = name
+            break
+    return key or DEFAULT_PROFILE
+
 def read_node_recording_yaml(ep: Dict[str,str]) -> Tuple[Optional[Dict[str,Any]], Optional[str]]:
     host = ep.get("ssh_host") or ""
     user = ep.get("ssh_user") or "pi"
@@ -731,18 +837,53 @@ def read_node_recording_yaml(ep: Dict[str,str]) -> Tuple[Optional[Dict[str,Any]]
         cfg = yaml.safe_load(text) or {}
     except Exception as e:
         return None, f"parse failed: {e}"
+
+    # New schema (profile-based) at top-level keys
+    profile = cfg.get("profile")
+    bitrate = cfg.get("bitrate_kbps")
+    rotation = cfg.get("rotation")
     rec = cfg.get("recording") or {}
-    resolution = str(rec.get("resolution","1920x1080"))
-    fps = int(rec.get("framerate", rec.get("fps", 15)))
-    duration = int(rec.get("duration_s", 10))
-    bitrate = int(rec.get("bitrate_kbps", 4000))
-    rotation = int(rec.get("rotation", 0))
+    duration = rec.get("duration_s")
+
+    # Legacy fallback
+    if not profile:
+        res_legacy = str(rec.get("resolution","1920x1080"))
+        fps_legacy = int(rec.get("framerate", rec.get("fps", 15)))
+        profile = _infer_profile_from_legacy(res_legacy, fps_legacy)
+        # If legacy carries bitrate/rotation in recording, map them too
+        if bitrate is None:
+            bitrate = rec.get("bitrate_kbps")
+        if rotation is None:
+            rotation = rec.get("rotation", 0)
+        if duration is None:
+            duration = rec.get("duration_s", 5)
+
+    # Normalize / defaults
+    if profile not in PROFILES:
+        profile = DEFAULT_PROFILE
+    bitrate = _clamp_bitrate_for_profile(profile, None if bitrate is None else int(bitrate))
+    try:
+        rotation = int(rotation if rotation is not None else 0)
+    except Exception:
+        rotation = 0
+    if rotation not in (0,90,180,270):
+        rotation = 0
+    try:
+        duration = int(duration if duration is not None else 5)
+    except Exception:
+        duration = 5
+    duration = max(2, min(600, duration))
+
+    # Derived for compatibility display
+    res, fps = _profile_to_res_fps(profile)
+
     return {
-        "resolution": resolution,
-        "fps": fps,
+        "profile": profile,
         "bitrate_kbps": bitrate,
         "rotation": rotation,
         "clip_duration_s": duration,
+        "resolution": res,
+        "fps": fps,
     }, None
 
 @app.route("/config/cameras")
@@ -765,27 +906,36 @@ def config_cameras_page():
             camera_rows.append(row)
     return render_template("config_cameras.html",
                            cameras=camera_rows, endpoints=endpoints,
+                           profiles=PROFILES,
                            title="Camera Settings")
 
 @app.route("/action/secure/cameras/save", methods=["POST"])
 def cameras_save():
     data = request.get_json(silent=True) or {}
     cam_id = (data.get("camera_id") or "").strip()
-    if not cam_id: return jsonify({"ok": False, "error": "camera_id required"}), 400
-    res = (data.get("resolution") or "1920x1080").lower()
-    if "x" not in res: return jsonify({"ok": False, "error": "resolution must look like 1920x1080"}), 400
+    if not cam_id:
+        return jsonify({"ok": False, "error": "camera_id required"}), 400
+
+    profile = (data.get("profile") or DEFAULT_PROFILE).strip()
+    if profile not in PROFILES:
+        return jsonify({"ok": False, "error": "invalid profile"}), 400
+
+    # Validate/clamp bitrate, rotation, duration
     try:
-        fps = int(data.get("fps", 15));  assert 1 <= fps <= 120
-        br  = int(data.get("bitrate_kbps", 4000)); assert 100 <= br <= 100000
-        rot = int(data.get("rotation", 0)); assert rot in (0,90,180,270)
-        dur = int(data.get("clip_duration_s", 10)); assert 2 <= dur <= 600
+        br_in = data.get("bitrate_kbps", None)
+        br = _clamp_bitrate_for_profile(profile, None if br_in is None else int(br_in))
+        rot = int(data.get("rotation", 0))
+        dur = int(data.get("clip_duration_s", 5))
     except Exception:
         return jsonify({"ok": False, "error": "invalid numeric field(s)"}), 400
+    if rot not in (0,90,180,270):
+        return jsonify({"ok": False, "error": "rotation must be one of 0,90,180,270"}), 400
+    if not (2 <= dur <= 600):
+        return jsonify({"ok": False, "error": "clip_duration_s out of range (2-600)"}), 400
 
     upsert_camera_settings({
         "camera_id": cam_id,
-        "resolution": res,
-        "fps": fps,
+        "profile": profile,
         "bitrate_kbps": br,
         "rotation": rot,
         "clip_duration_s": dur,
@@ -822,12 +972,22 @@ def cameras_push_to_node():
     except Exception as e:
         return jsonify({"ok": False, "error": f"parse remote YAML failed: {e}"}), 500
 
+    # Write new schema keys
+    profile = cs.get("profile") or DEFAULT_PROFILE
+    if profile not in PROFILES:
+        profile = DEFAULT_PROFILE
+    cfg["profile"] = profile
+    cfg["bitrate_kbps"] = int(cs.get("bitrate_kbps", PROFILES[profile]["default_bitrate_kbps"]))
+    cfg["rotation"] = int(cs.get("rotation", 0))
+
+    # Always keep duration under recording
     rec = cfg.get("recording") or {}
-    rec["resolution"]   = cs["resolution"]
-    rec["framerate"]    = int(cs["fps"])
-    rec["duration_s"]   = int(cs["clip_duration_s"])
-    rec["bitrate_kbps"] = int(cs["bitrate_kbps"])
-    rec["rotation"]     = int(cs["rotation"])
+    rec["duration_s"] = int(cs.get("clip_duration_s", 5))
+
+    # For legacy compatibility, also reflect resolution/fps under recording
+    res, fps = _profile_to_res_fps(profile)
+    rec["resolution"] = res
+    rec["framerate"] = int(fps)
     cfg["recording"] = rec
 
     new_text = yaml.safe_dump(cfg, sort_keys=False)
@@ -844,6 +1004,7 @@ def cameras_import_from_node():
     node_vals, err = read_node_recording_yaml(ep)
     if not node_vals:
         return jsonify({"ok": False, "error": f"read node failed: {err or 'unknown'}"}), 500
+    # Upsert with new schema (also stores res/fps derived from profile)
     node_vals["camera_id"] = cam_id
     upsert_camera_settings(node_vals)
     return jsonify({"ok": True, "settings": node_vals}), 200
