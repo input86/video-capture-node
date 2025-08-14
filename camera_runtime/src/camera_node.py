@@ -18,6 +18,12 @@ from gpiozero import LED
 from picamera2 import Picamera2
 from picamera2.encoders import H264Encoder
 
+# libcamera Transform for rotation (0/90/180/270)
+try:
+    from libcamera import Transform
+except Exception:
+    Transform = None  # Fallback: if unavailable, rotation control is skipped
+
 # ==========
 # Config / Paths
 # ==========
@@ -26,12 +32,130 @@ NODE_ID = CFG["node_id"]
 HUB_URL = CFG["hub_url"].rstrip("/")
 AUTH_TOKEN = CFG["auth_token"]
 
-REC_RES = tuple(map(int, CFG["recording"]["resolution"].split("x")))
-REC_FPS = int(CFG["recording"]["framerate"])
+# ------- Profiles (fixed bundles) -------
+# Only bitrate and rotation are adjustable by the user; others are fixed here.
+# If CFG has no 'profile', we fall back to legacy fields below.
+PROFILES = {
+    "balanced_1080p30": {
+        "resolution": (1920, 1080),
+        "fps": 30,
+        "gop": 60,           # informational (not enforced here to keep changes minimal)
+        "h264_level": "4.1", # informational
+        "default_bitrate_kbps": 14000,
+        "min_bitrate_kbps": 12000,
+        "max_bitrate_kbps": 18000,
+        "default_rotation": 0
+    },
+    "action_1080p60": {
+        "resolution": (1920, 1080),
+        "fps": 60,
+        "gop": 120,
+        "h264_level": "4.2",
+        "default_bitrate_kbps": 24000,
+        "min_bitrate_kbps": 22000,
+        "max_bitrate_kbps": 28000,
+        "default_rotation": 0
+    },
+    "storage_saver_720p30": {
+        "resolution": (1280, 720),
+        "fps": 30,
+        "gop": 60,
+        "h264_level": "4.0",
+        "default_bitrate_kbps": 7000,
+        "min_bitrate_kbps": 6000,
+        "max_bitrate_kbps": 10000,
+        "default_rotation": 0
+    },
+    "night_low_noise_1080p30": {
+        "resolution": (1920, 1080),
+        "fps": 30,
+        "gop": 60,
+        "h264_level": "4.1",
+        "default_bitrate_kbps": 18000,
+        "min_bitrate_kbps": 16000,
+        "max_bitrate_kbps": 22000,
+        "default_rotation": 0
+    },
+    "smooth_720p60": {
+        "resolution": (1280, 720),
+        "fps": 60,
+        "gop": 120,
+        "h264_level": "4.1",
+        "default_bitrate_kbps": 12000,
+        "min_bitrate_kbps": 10000,
+        "max_bitrate_kbps": 16000,
+        "default_rotation": 0
+    },
+}
+
+def _load_effective_video_settings(cfg: dict):
+    """
+    Return (RES_TUPLE, FPS_INT, BITRATE_BPS_INT|None, ROT_DEG_INT, used_profile_name or None)
+    Minimal changes: apply only what we need (resolution/fps/bitrate/rotation).
+    """
+    profile_name = cfg.get("profile")
+    if profile_name in PROFILES:
+        p = PROFILES[profile_name]
+        # Resolution/FPS from profile
+        res = tuple(p["resolution"])
+        fps = int(p["fps"])
+
+        # Bitrate override (validated)
+        br_kbps = cfg.get("bitrate_kbps", p["default_bitrate_kbps"])
+        try:
+            br_kbps = int(br_kbps)
+        except Exception:
+            br_kbps = p["default_bitrate_kbps"]
+        br_kbps = max(p["min_bitrate_kbps"], min(p["max_bitrate_kbps"], br_kbps))
+        bitrate_bps = br_kbps * 1000
+
+        # Rotation override (validated)
+        rot_allowed = {0, 90, 180, 270}
+        rot = cfg.get("rotation", p["default_rotation"])
+        try:
+            rot = int(rot)
+        except Exception:
+            rot = p["default_rotation"]
+        if rot not in rot_allowed:
+            rot = p["default_rotation"]
+
+        return res, fps, bitrate_bps, rot, profile_name
+
+    # Backwards-compatibility (no profile): use legacy fields
+    res = tuple(map(int, cfg["recording"]["resolution"].split("x")))
+    fps = int(cfg["recording"].get("framerate", cfg["recording"].get("fps", 30)))
+    # Keep Picamera2 default bitrate if none provided (maintains legacy behavior)
+    br_kbps = cfg.get("bitrate_kbps")  # optional legacy override
+    bitrate_bps = int(br_kbps) * 1000 if br_kbps else None
+
+    # Rotation optional in legacy mode (defaults to 0 if provided incorrectly)
+    rot = cfg.get("rotation", 0)
+    try:
+        rot = int(rot)
+    except Exception:
+        rot = 0
+    if rot not in {0, 90, 180, 270}:
+        rot = 0
+
+    return res, fps, bitrate_bps, rot, None
+
+# Pull effective settings once at startup
+EFF_RES, EFF_FPS, EFF_BITRATE_BPS, EFF_ROT_DEG, EFF_PROFILE = _load_effective_video_settings(CFG)
+
+REC_RES = EFF_RES
+REC_FPS = EFF_FPS
+# Keep REC_DUR / thresholds from your existing config
 REC_DUR = int(CFG["recording"]["duration_s"])
 
 THRESH_MM = int(CFG["sensor"]["threshold_mm"])
 DEBOUNCE_MS = int(CFG["sensor"]["debounce_ms"])
+
+# NEW: optional XSHUT GPIO (BCM) for VL53L0X hard reset; if not set, no change in behavior
+XSHUT_GPIO = CFG.get("sensor", {}).get("xshut_gpio")
+try:
+    XSHUT_GPIO = int(XSHUT_GPIO) if XSHUT_GPIO is not None else None
+except Exception:
+    XSHUT_GPIO = None
 
 MIN_FREE_PCT = int(CFG["storage"]["min_free_percent"])
 
@@ -119,14 +243,60 @@ def log(msg):
 # Camera & Sensor Init
 # ==========
 log("[INIT] Initializing VL53L0X sensor and camera...")
+
+# If XSHUT is wired, pulse it low->high to guarantee a clean sensor reset before init.
+if XSHUT_GPIO is not None:
+    try:
+        if int(XSHUT_GPIO) == LED_PIN:
+            log(f"[SENSOR] WARNING: xshut_gpio ({XSHUT_GPIO}) conflicts with status LED pin ({LED_PIN}); skipping XSHUT pulse.")
+        else:
+            xshut = LED(int(XSHUT_GPIO))  # use gpiozero LED as a simple output
+            xshut.off()                   # drive LOW (sensor in reset)
+            time.sleep(0.05)
+            xshut.on()                    # drive HIGH (release reset)
+            time.sleep(0.05)
+            # leave HIGH for normal operation
+            log(f"[SENSOR] Pulsed XSHUT on GPIO{XSHUT_GPIO} (LOW 50ms -> HIGH).")
+            # xshut stays referenced to keep the line driven HIGH; no further action needed
+    except Exception as e:
+        log(f"[SENSOR] XSHUT pulse failed: {e}")
+
+# Proceed with normal I2C + sensor init
 i2c = busio.I2C(board.SCL, board.SDA)
 sensor = VL53L0X(i2c)
 
 picam2 = Picamera2()
+
+# Build transform if available and rotation requested
+transform_kw = {}
+if Transform and EFF_ROT_DEG in {0, 90, 180, 270}:
+    try:
+        transform_kw["transform"] = Transform(rotation=EFF_ROT_DEG)
+    except Exception:
+        # If Transform rotation fails (older stack), ignore and continue
+        pass
+
+# Enforce FPS by setting FrameDurationLimits (min=max=period_us)
+controls = {}
+try:
+    period_us = int(1_000_000 / REC_FPS)
+    controls["FrameDurationLimits"] = (period_us, period_us)
+except Exception:
+    pass  # If anything goes wrong, don't fail; leave defaults
+
 video_config = picam2.create_video_configuration(
-    main={"size": REC_RES}
+    main={"size": REC_RES},
+    **transform_kw
 )
 picam2.configure(video_config)
+
+# Try to apply FPS lock controls if supported
+if controls:
+    try:
+        picam2.set_controls(controls)
+    except Exception:
+        pass
+
 picam2.start()
 
 # ==========
@@ -213,13 +383,19 @@ def record_clip() -> Path:
     h264 = TMP_DIR / f"{NODE_ID}_{ts}.h264"
     mp4 = TMP_DIR / f"{NODE_ID}_{ts}.mp4"
 
-    encoder = H264Encoder()
+    # Minimal change: set bitrate if we have one from profile/override
+    if EFF_BITRATE_BPS:
+        encoder = H264Encoder(bitrate=EFF_BITRATE_BPS)
+    else:
+        encoder = H264Encoder()
+
     picam2.start_recording(encoder, str(h264))
     time.sleep(REC_DUR)
     picam2.stop_recording()
 
     try:
-        # Fast remux to MP4
+        # Fast remux to MP4 (+faststart if desired with minimal change via env flag)
+        # Keeping your original command; we won't alter it to add movflags here.
         run(["ffmpeg", "-y", "-i", str(h264), "-c", "copy", str(mp4)], check=True)
     except CalledProcessError as e:
         log(f"[RECORD] ffmpeg error: {e}")
@@ -252,7 +428,10 @@ def main():
 
     last_trigger_ms = 0
 
-    log("[READY] Camera node started. Standing by...")
+    # Log effective settings once
+    prof_str = EFF_PROFILE if EFF_PROFILE else "legacy"
+    br_str = f"{EFF_BITRATE_BPS//1000} kbps" if EFF_BITRATE_BPS else "default"
+    log(f"[READY] Profile={prof_str} | Res={REC_RES[0]}x{REC_RES[1]} @ {REC_FPS}fps | Bitrate={br_str} | Rotation={EFF_ROT_DEG}°")
     led.set_mode("idle")
 
     try:
@@ -264,9 +443,6 @@ def main():
                 log(f"[SENSOR] Read exception: {e}")
                 time.sleep(0.1)
                 continue
-
-            # Debug distance log (throttled)
-            # print(f"Distance: {dist} mm")
 
             if dist < THRESH_MM:
                 now_ms = int(time.time() * 1000)
@@ -318,6 +494,8 @@ def main():
 # ==========
 # Graceful Shutdown
 # ==========
+stop_event = threading.Event()
+
 def _handle_sig(signum, frame):
     stop_event.set()
 
