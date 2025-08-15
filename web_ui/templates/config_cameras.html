@@ -25,27 +25,27 @@
   {% set prof = (has_profiles and profiles[cam_profile]) or None %}
 
   {# Effective display fallbacks #}
-  {% set eff_res = (prof and (prof.resolution ~ '')) 
-                   or (cam.effective and cam.effective.resolution) 
+  {% set eff_res = (prof and (prof.resolution ~ ''))
+                   or (cam.effective and cam.effective.resolution)
                    or '1280x720' %}
-  {% set eff_fps = (prof and prof.fps) 
-                   or (cam.effective and cam.effective.fps) 
+  {% set eff_fps = (prof and prof.fps)
+                   or (cam.effective and cam.effective.fps)
                    or 30 %}
-  {% set eff_gop = (prof and prof.gop) 
-                   or (cam.effective and cam.effective.gop) 
+  {% set eff_gop = (prof and prof.gop)
+                   or (cam.effective and cam.effective.gop)
                    or 60 %}
-  {% set eff_h264_profile = (prof and prof.h264_profile) 
-                            or (cam.effective and cam.effective.h264_profile) 
+  {% set eff_h264_profile = (prof and prof.h264_profile)
+                            or (cam.effective and cam.effective.h264_profile)
                             or 'high' %}
-  {% set eff_h264_level = (prof and prof.h264_level) 
-                          or (cam.effective and cam.effective.h264_level) 
+  {% set eff_h264_level = (prof and prof.h264_level)
+                          or (cam.effective and cam.effective.h264_level)
                           or '4.0' %}
-  {% set eff_bitrate = cam.bitrate_kbps 
-                       or (prof and prof.default_bitrate_kbps) 
+  {% set eff_bitrate = cam.bitrate_kbps
+                       or (prof and prof.default_bitrate_kbps)
                        or 7000 %}
   {% set eff_rotation = (cam.rotation is not none and cam.rotation) or 0 %}
-  {% set eff_duration = cam.clip_duration_s 
-                        or (cam.recording and cam.recording.duration_s) 
+  {% set eff_duration = cam.clip_duration_s
+                        or (cam.recording and cam.recording.duration_s)
                         or 5 %}
 
   <div class="accordion-item">
@@ -160,7 +160,7 @@
 
           <hr>
 
-          <!-- Node Endpoint (unchanged) -->
+          <!-- Node Endpoint -->
           <h6 class="mb-2">Node Endpoint</h6>
           <div class="row g-3">
             <div class="col-md-3">
@@ -171,13 +171,17 @@
               <label class="form-label">SSH User</label>
               <input type="text" class="form-control ep" name="ssh_user" value="{{ ep.ssh_user }}">
             </div>
-            <div class="col-md-4">
+            <div class="col-md-3">
               <label class="form-label">Config Path</label>
               <input type="text" class="form-control ep" name="config_path" value="{{ ep.config_path }}">
             </div>
-            <div class="col-md-3">
+            <div class="col-md-2">
               <label class="form-label">Service Name</label>
               <input type="text" class="form-control ep" name="service_name" value="{{ ep.service_name }}">
+            </div>
+            <div class="col-md-2">
+              <label class="form-label">XSHUT GPIO (optional)</label>
+              <input type="number" class="form-control ep" name="xshut_gpio" value="{{ ep.xshut_gpio is defined and ep.xshut_gpio or '' }}" placeholder="e.g. 4">
             </div>
           </div>
         </form>
@@ -306,12 +310,15 @@ document.addEventListener('click', async (ev) => {
     }
 
     else if (btn.classList.contains('btn-save-endpoint')) {
+      const xgpioRaw = form.querySelector('[name=xshut_gpio]')?.value ?? '';
+      const xgpio = (xgpioRaw.trim() === '' ? null : parseInt(xgpioRaw, 10));
       const payload = {
         camera_id: cam,
         ssh_host: form.querySelector('[name=ssh_host]').value.trim(),
         ssh_user: form.querySelector('[name=ssh_user]').value.trim(),
         config_path: form.querySelector('[name=config_path]').value.trim(),
         service_name: form.querySelector('[name=service_name]').value.trim(),
+        xshut_gpio: isNaN(xgpio) ? null : xgpio,   // ← ADDED
       };
       await postJSON('/action/secure/cameras/save_endpoint', payload);
       alert('Endpoint saved.');
