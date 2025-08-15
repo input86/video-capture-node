@@ -254,10 +254,10 @@ if XSHUT_GPIO is not None:
             xshut.off()                   # drive LOW (sensor in reset)
             time.sleep(0.05)
             xshut.on()                    # drive HIGH (release reset)
-            time.sleep(0.05)
+            time.sleep(0.6)               # <-- allow sensor & camera bus to settle
             # leave HIGH for normal operation
             log(f"[SENSOR] Pulsed XSHUT on GPIO{XSHUT_GPIO} (LOW 50ms -> HIGH).")
-            # xshut stays referenced to keep the line driven HIGH; no further action needed
+            # keep object alive so the line stays driven HIGH
     except Exception as e:
         log(f"[SENSOR] XSHUT pulse failed: {e}")
 
@@ -265,7 +265,25 @@ if XSHUT_GPIO is not None:
 i2c = busio.I2C(board.SCL, board.SDA)
 sensor = VL53L0X(i2c)
 
-picam2 = Picamera2()
+# Create Picamera2 with a brief retry to avoid race where no cameras are enumerated yet.
+def _make_picam2_with_retry(max_tries=6, delay=0.5):
+    last_err = None
+    for attempt in range(1, max_tries + 1):
+        try:
+            return Picamera2()
+        except IndexError as e:
+            # Happens when global_camera_info() is empty right after boot/reset
+            last_err = e
+            log(f"[CAMERA] Picamera2 not ready (attempt {attempt}/{max_tries}); retrying in {delay:.1f}s...")
+            time.sleep(delay)
+        except Exception as e:
+            # Unexpected, but try once more in case it's transient
+            last_err = e
+            log(f"[CAMERA] Init error (attempt {attempt}/{max_tries}): {e}; retrying in {delay:.1f}s...")
+            time.sleep(delay)
+    raise last_err if last_err else RuntimeError("Picamera2 init failed")
+
+picam2 = _make_picam2_with_retry()
 
 # Build transform if available and rotation requested
 transform_kw = {}
