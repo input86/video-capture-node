@@ -9,7 +9,7 @@
     <button id="btnStart" class="btn btn-primary">Enable Preview</button>
     <button id="btnStop" class="btn btn-outline-secondary">Exit Preview</button>
   </div>
-  <div class="form-text">Preview stops the recorder on the node while active.</div>
+  <div class="form-text">Preview pauses the recorder on the node while active (in the same process).</div>
 </div>
 
 <div class="ratio ratio-16x9 border rounded bg-light d-flex align-items-center justify-content-center">
@@ -30,12 +30,14 @@ async function postJSON(url, body) {
 
 async function startPreview() {
   await postJSON('/action/secure/preview/start', {camera_id: camId});
-  document.getElementById('stream').src = `http://${host}:8080/stream.mjpg?ts=${Date.now()}`;
+  document.getElementById('stream').src = `http://${host}:8080/api/live/mjpeg?ts=${Date.now()}`;
   document.getElementById('stream').style.display = '';
   document.getElementById('nostream').style.display = 'none';
 }
 async function stopPreview() {
   await postJSON('/action/secure/preview/stop', {camera_id: camId});
+  const img = document.getElementById('stream');
+  img.removeAttribute('src');
   document.getElementById('stream').style.display = 'none';
   document.getElementById('nostream').style.display = '';
 }

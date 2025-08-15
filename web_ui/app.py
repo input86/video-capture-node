@@ -55,6 +55,8 @@ HB_STALE  = int(os.environ.get("HB_STALE_SEC", "30"))
 
 app = Flask(__name__)
 
+
+
 # --------- Profiles catalog (server-side source of truth for UI & validation) ---------
 PROFILES: Dict[str, Dict[str, Any]] = {
     "balanced_1080p30": {
@@ -384,19 +386,6 @@ def _ssh_write_and_restart(ssh_user: str, ssh_host: str, path: str, content: str
         try: os.unlink(local_tmp)
         except Exception: pass
 
-def _ssh_journal_tail(ssh_user: str, ssh_host: str, unit: str, lines: int = 60) -> str:
-    p = _ssh(["ssh", f"{ssh_user}@{ssh_host}", f"journalctl -u {unit} -n {lines} --no-pager --output=short"])
-    return (p.stdout or p.stderr).strip()
-
-def _ssh_sysctl(ssh_user: str, ssh_host: str, action: str, unit: str) -> Tuple[bool, str]:
-    p = _ssh(["ssh", f"{ssh_user}@{ssh_host}", f"sudo systemctl {action} {unit}"])
-    ok = (p.returncode == 0)
-    return ok, (p.stdout or p.stderr).strip()
-
-def _ssh_is_active(ssh_user: str, ssh_host: str, unit: str) -> str:
-    p = _ssh(["ssh", f"{ssh_user}@{ssh_host}", f"systemctl is-active {unit}"])
-    return (p.stdout or p.stderr).strip()
-
 def _http_json(url: str, method: str = "GET", body: Optional[dict] = None, timeout: int = 8) -> Tuple[bool, Any, str]:
     data = None
     headers = {"Content-Type": "application/json"}
@@ -422,7 +411,8 @@ def _http_json(url: str, method: str = "GET", body: Optional[dict] = None, timeo
 def wait_unit_state(ssh_user: str, ssh_host: str, unit: str, desired: str, timeout_sec: float = 12.0) -> bool:
     deadline = time.time() + timeout_sec
     while time.time() < deadline:
-        st = _ssh_is_active(ssh_user, ssh_host, unit)
+        p = _ssh(["ssh", f"{ssh_user}@{ssh_host}", f"systemctl is-active {unit}"])
+        st = (p.stdout or p.stderr).strip()
         if desired == "active" and st == "active":
             return True
         if desired == "inactive" and st in ("inactive","failed","unknown"):
@@ -432,12 +422,12 @@ def wait_unit_state(ssh_user: str, ssh_host: str, unit: str, desired: str, timeo
 
 def wait_until_recorder_ready(ssh_user: str, ssh_host: str, unit: str, timeout_sec: float = 20.0) -> Tuple[bool, str]:
     if not wait_unit_state(ssh_user, ssh_host, unit, "active", timeout_sec):
-        tail = _ssh_journal_tail(ssh_user, ssh_host, unit, 80)
-        return False, f"{unit} not active\n{tail}"
-    tail = _ssh_journal_tail(ssh_user, ssh_host, unit, 120)
-    if re.search(r"\[READY\]\s+Camera node started", tail):
+        tail = _ssh(["ssh", f"{ssh_user}@{ssh_host}", f"journalctl -u {unit} -n 80 --no-pager --output=short"]).stdout
+        return False, f"{unit} not active\n{(tail or '').strip()}"
+    tail = _ssh(["ssh", f"{ssh_user}@{ssh_host}", f"journalctl -u {unit} -n 120 --no-pager --output=short"]).stdout
+    if re.search(r"\[READY\]\s+Camera node started", tail or ""):
         return True, ""
-    return True, tail
+    return True, (tail or "")
 
 # -------------------- Template filters --------------------
 
@@ -454,13 +444,11 @@ def human_bytes(n: float) -> str:
 @app.template_filter("date_fmt")
 def date_fmt(ts: Optional[float]) -> str:
     if ts is None: return "—"
-    # Render in Miami time (EST/EDT)
     return datetime.fromtimestamp(ts, tz=ZoneInfo("America/New_York")).strftime("%Y-%m-%d %H:%M:%S %Z")
 
 @app.template_filter("hb_fmt")
 def hb_fmt(ts: Optional[float]) -> str:
     if ts is None: return "—"
-    # Render in Miami time (EST/EDT)
     return datetime.fromtimestamp(ts, tz=ZoneInfo("America/New_York")).strftime("%Y-%m-%d %H:%M:%S %Z")
 
 # -------------------- Pages --------------------
@@ -515,7 +503,6 @@ def download_clip(relpath: str):
     except Exception: abort(404)
     if not file_path.exists() or not file_path.is_file():
         abort(404)
-    # internal sendfile via Nginx
     internal_uri = "/__protected__/clips/" + str(file_path.relative_to(base)).replace("\\", "/")
     headers = {"Content-Disposition": f'attachment; filename="{file_path.name}"',
                "X-Accel-Redirect": internal_uri}
@@ -694,7 +681,6 @@ def get_camera_settings(camera_id: str) -> Dict[str, Any]:
         """, (camera_id,))
         row = cur.fetchone()
         if not row:
-            # default row using DEFAULT_PROFILE
             res, fps = _profile_to_res_fps(DEFAULT_PROFILE)
             return {
                 "camera_id": camera_id,
@@ -707,7 +693,6 @@ def get_camera_settings(camera_id: str) -> Dict[str, Any]:
                 "updated_at": None
             }
         profile = row[7] if len(row) > 7 and row[7] else DEFAULT_PROFILE
-        # If resolution/fps missing, derive from profile for compatibility
         res = row[1] or _profile_to_res_fps(profile)[0]
         fps = int(row[2]) if row[2] is not None else _profile_to_res_fps(profile)[1]
         return {
@@ -727,7 +712,6 @@ def upsert_camera_settings(payload: Dict[str, Any]) -> None:
     profile = payload.get("profile") or DEFAULT_PROFILE
     if profile not in PROFILES:
         profile = DEFAULT_PROFILE
-    # normalize fields
     br = _clamp_bitrate_for_profile(profile, payload.get("bitrate_kbps"))
     try:
         rot = int(payload.get("rotation", 0))
@@ -740,8 +724,6 @@ def upsert_camera_settings(payload: Dict[str, Any]) -> None:
     except Exception:
         dur = 5
     dur = max(2, min(600, dur))
-
-    # backfill res/fps for compatibility storage
     res, fps = _profile_to_res_fps(profile)
 
     with db_conn() as db:
@@ -836,14 +818,12 @@ def read_node_recording_yaml(ep: Dict[str,str]) -> Tuple[Optional[Dict[str,Any]]
     except Exception as e:
         return None, f"parse failed: {e}"
 
-    # New schema (profile-based) at top-level keys
     profile = cfg.get("profile")
     bitrate = cfg.get("bitrate_kbps")
     rotation = cfg.get("rotation")
     rec = cfg.get("recording") or {}
     duration = rec.get("duration_s")
 
-    # Legacy fallback
     if not profile:
         res_legacy = str(rec.get("resolution","1920x1080"))
         fps_legacy = int(rec.get("framerate", rec.get("fps", 15)))
@@ -855,7 +835,6 @@ def read_node_recording_yaml(ep: Dict[str,str]) -> Tuple[Optional[Dict[str,Any]]
         if duration is None:
             duration = rec.get("duration_s", 5)
 
-    # Normalize / defaults
     if profile not in PROFILES:
         profile = DEFAULT_PROFILE
     bitrate = _clamp_bitrate_for_profile(profile, None if bitrate is None else int(bitrate))
@@ -871,7 +850,6 @@ def read_node_recording_yaml(ep: Dict[str,str]) -> Tuple[Optional[Dict[str,Any]]
         duration = 5
     duration = max(2, min(600, duration))
 
-    # Derived for compatibility display
     res, fps = _profile_to_res_fps(profile)
 
     return {
@@ -917,7 +895,6 @@ def cameras_save():
     if profile not in PROFILES:
         return jsonify({"ok": False, "error": "invalid profile"}), 400
 
-    # Validate/clamp bitrate, rotation, duration
     try:
         br_in = data.get("bitrate_kbps", None)
         br = _clamp_bitrate_for_profile(profile, None if br_in is None else int(br_in))
@@ -977,11 +954,9 @@ def cameras_push_to_node():
     cfg["bitrate_kbps"] = int(cs.get("bitrate_kbps", PROFILES[profile]["default_bitrate_kbps"]))
     cfg["rotation"] = int(cs.get("rotation", 0))
 
-    # Always keep duration under recording
+    # Always keep duration under recording; mirror res/fps for compatibility
     rec = cfg.get("recording") or {}
     rec["duration_s"] = int(cs.get("clip_duration_s", 5))
-
-    # For compatibility, mirror resolution/fps under recording to match the profile
     res, fps = _profile_to_res_fps(profile)
     rec["resolution"] = res
     rec["framerate"] = int(fps)
@@ -1005,7 +980,7 @@ def cameras_import_from_node():
     upsert_camera_settings(node_vals)
     return jsonify({"ok": True, "settings": node_vals}), 200
 
-# -------------------- PREVIEW (simple page; no telemetry) --------------------
+# -------------------- PREVIEW (node in-process LIVE) --------------------
 
 @app.route("/preview/<camera_id>")
 def preview_page(camera_id: str):
@@ -1024,22 +999,11 @@ def preview_start():
     if not cam: return jsonify({"ok": False, "error": "camera_id required"}), 400
     ep = get_camera_endpoint(cam)
     host = ep.get("ssh_host") or ""
-    user = ep.get("ssh_user") or "pi"
-    rec_unit = ep.get("service_name") or "camera-node"
     if not host: return jsonify({"ok": False, "error": "ssh_host not set"}), 400
 
-    ok, msg = _ssh_sysctl(user, host, "stop", rec_unit)
+    ok, _, err = _http_json(f"http://{host}:8080/api/live/start", method="POST", body={})
     if not ok:
-        return jsonify({"ok": False, "error": f"failed to stop {rec_unit}: {msg}"}), 500
-    if not wait_unit_state(user, host, rec_unit, "inactive", 12.0):
-        tail = _ssh_journal_tail(user, host, rec_unit, 60)
-        return jsonify({"ok": False, "error": f"{rec_unit} did not stop cleanly", "log": tail}), 502
-
-    ok, msg = _ssh_sysctl(user, host, "start", "camera-preview")
-    if not ok:
-        return jsonify({"ok": False, "error": f"failed to start camera-preview: {msg}"}), 500
-
-    _http_json(f"http://{host}:8080/api/preview/start", method="POST", body={}, timeout=5)
+        return jsonify({"ok": False, "error": f"node live/start failed: {err or 'unknown'}"}), 502
     return jsonify({"ok": True}), 200
 
 @app.route("/action/secure/preview/stop", methods=["POST"])
@@ -1049,26 +1013,12 @@ def preview_stop():
     if not cam: return jsonify({"ok": False, "error": "camera_id required"}), 400
     ep = get_camera_endpoint(cam)
     host = ep.get("ssh_host") or ""
-    user = ep.get("ssh_user") or "pi"
-    rec_unit = ep.get("service_name") or "camera-node"
     if not host: return jsonify({"ok": False, "error": "ssh_host not set"}), 400
 
-    _http_json(f"http://{host}:8080/api/preview/stop", method="POST", body={}, timeout=5)
-    _ssh_sysctl(user, host, "stop", "camera-preview")
-    if not wait_unit_state(user, host, "camera-preview", "inactive", 12.0):
-        tail_prev = _ssh_journal_tail(user, host, "camera-preview", 80)
-        return jsonify({"ok": False, "error": "preview did not stop cleanly", "log": tail_prev}), 502
-
-    ok, msg = _ssh_sysctl(user, host, "start", rec_unit)
+    ok, _, err = _http_json(f"http://{host}:8080/api/live/stop", method="POST", body={})
     if not ok:
-        tail_rec = _ssh_journal_tail(user, host, rec_unit, 100)
-        return jsonify({"ok": False, "error": f"failed to start {rec_unit}: {msg}", "log": tail_rec}), 500
-
-    ok_ready, tail = wait_until_recorder_ready(user, host, rec_unit, 20.0)
-    if not ok_ready:
-        return jsonify({"ok": False, "error": f"{rec_unit} did not become active", "log": tail}), 502
-
-    return jsonify({"ok": True, "log": tail if tail else ""}), 200
+        return jsonify({"ok": False, "error": f"node live/stop failed: {err or 'unknown'}"}), 502
+    return jsonify({"ok": True}), 200
 
 # -------------------- ADMIN TOOLS --------------------
 

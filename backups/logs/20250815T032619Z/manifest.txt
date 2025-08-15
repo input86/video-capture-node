@@ -1,0 +1,20 @@
+Manifest UTC: 2025-08-15T03:26:19Z
+Host: hub-server
+Kernel: Linux hub-server 6.12.25+rpt-rpi-v8 #1 SMP PREEMPT Debian 1:6.12.25-1+rpt1 (2025-04-30) aarch64 GNU/Linux
+Data dir: /home/pi/data
+DB path:  /home/pi/data/hub.db
+
+Hub services status:
+  hub-api                  active
+  hub-heartbeat            active
+  tft-ui                   active
+
+WebUI services status:
+  hub-web-admin            active
+  hub-web-thumbs           inactive
+  hub-web-thumbs.timer     active
+
+Nginx site available: /etc/nginx/sites-available/hub_web_admin
+Nginx site enabled:   /etc/nginx/sites-enabled/hub_web_admin
+Basic auth file:      /etc/nginx/.htpasswd (copied? no)
+WebUI env file:       /etc/default/hub-web-admin (copied? no)
