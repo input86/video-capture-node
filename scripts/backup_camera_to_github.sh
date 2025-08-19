@@ -68,17 +68,26 @@ SYSDIR="backups/system/$DATE_SAFE"
 CAMBACK="backups/camera"
 
 # =========
-# Runtime → repo mirror
+# Runtime → repo mirror (FIXED EXCLUDES)
 # =========
 if [ -d "$CAM_RUNTIME" ]; then
   echo "[i] Syncing $CAM_RUNTIME -> $REPO_DIR/$CAM_REPO_DST ..."
-  rsync -a --delete \
-    --exclude ".git/" \
-    --exclude "venv/" --exclude ".venv/" \
-    --exclude "__pycache__/" ".mypy_cache/" ".pytest_cache/" \
-    --exclude "*.pyc" \
-    --exclude ".env" --exclude "*.env" \
-    "$CAM_RUNTIME/" "$CAM_REPO_DST/"
+  EXCLUDES=(
+    ".git/"
+    "venv/"
+    ".venv/"
+    "__pycache__/"
+    ".mypy_cache/"
+    ".pytest_cache/"
+    "*.pyc"
+    ".env"
+    "*.env"
+  )
+  RSYNC_ARGS=(-a --delete)
+  for pat in "${EXCLUDES[@]}"; do
+    RSYNC_ARGS+=("--exclude=$pat")
+  done
+  rsync "${RSYNC_ARGS[@]}" "$CAM_RUNTIME/" "$CAM_REPO_DST/"
 else
   echo "[!] Camera runtime not found at $CAM_RUNTIME (skipping code sync)"
 fi
@@ -117,7 +126,6 @@ save_unit() {
 echo "[i] Saving service files & diagnostics..."
 for s in "${ALL_SERVICES[@]}"; do
   save_unit "$s"
-  # status & enablement snapshot
   {
     echo "### systemctl status $s"
     systemctl status "$s" --no-pager || true
@@ -128,7 +136,6 @@ for s in "${ALL_SERVICES[@]}"; do
     echo "### show $s (selected)"
     systemctl show "$s" -p Id -p FragmentPath -p Description -p ActiveState -p SubState -p ExecStart || true
   } > "$LOGDIR/${s}-status.txt"
-  # last 1000 lines of journal
   sudo journalctl -u "$s" -n 1000 --no-pager > "$LOGDIR/${s}.log" 2>/dev/null || true
 done
 
@@ -145,8 +152,6 @@ python3 --version 2>/dev/null | tee "$CAMBACK/python-version-$DATE_SAFE.txt" >/d
 # =========
 if [ -f "$CAM_RUNTIME/config.yaml" ]; then
   cp -f "$CAM_RUNTIME/config.yaml" "$CAMBACK/config-$DATE_SAFE.yaml"
-
-  # Redact secrets (auth_tokens/auth-token/auth_token)
   awk '
     BEGIN{inblock=0}
     /^[[:space:]]*auth_tokens:/ {print "auth_tokens: {REDACTED: true}"; inblock=1; next}
@@ -158,7 +163,7 @@ if [ -f "$CAM_RUNTIME/config.yaml" ]; then
 fi
 
 # =========
-# System snapshot (helps rebuild identical nodes)
+# System snapshot
 # =========
 {
   echo "UTC: $DATE_HUMAN"
@@ -170,12 +175,8 @@ fi
   echo
   echo "User/groups (pi): $(id -nG pi 2>/dev/null || true)"
   echo
-  echo "Interfaces:"
-  ip -br a || true
-  echo
-  echo "Routes:"
-  ip route || true
-  echo
+  echo "Interfaces:"; ip -br a || true; echo
+  echo "Routes:"; ip route || true; echo
   echo "WiFi networks (recent):"
   sudo awk -F= '/ssid=/{print $2}' /etc/NetworkManager/system-connections/* 2>/dev/null | sort -u || true
 } > "$SYSDIR/host-summary.txt"
@@ -183,14 +184,12 @@ fi
 dpkg-query -W -f='${binary:Package}\t${Version}\n' > "$SYSDIR/packages.txt" || true
 crontab -l > "$SYSDIR/crontab-pi.txt" 2>/dev/null || true
 sudo test -f /etc/crontab && sudo cp -f /etc/crontab "$SYSDIR/crontab-root.txt" || true
-
-# Boot & modules (useful for overlays and I2C/spi settings)
 sudo test -f /boot/config.txt && sudo cp -f /boot/config.txt "$SYSDIR/boot-config.txt" || true
 sudo test -f /etc/modules && sudo cp -f /etc/modules "$SYSDIR/etc-modules.txt" || true
 sudo test -d /etc/udev/rules.d && sudo rsync -a /etc/udev/rules.d/ "$SYSDIR/udev-rules.d/" || true
 
 # =========
-# Minimal manifest (human friendly)
+# Manifest
 # =========
 {
   echo "UTC: $DATE_HUMAN"
@@ -203,7 +202,7 @@ sudo test -d /etc/udev/rules.d && sudo rsync -a /etc/udev/rules.d/ "$SYSDIR/udev
 } > "$LOGDIR/manifest.txt"
 
 # =========
-# Tarball of runtime (optional but handy)
+# Tarball of runtime
 # =========
 if [ -d "$CAM_REPO_DST" ]; then
   TAR="$CAMBACK/camera-runtime-$HOSTTAG-$DATE_SAFE${LABEL_SAFE:+-$LABEL_SAFE}.tar.gz"
@@ -211,7 +210,7 @@ if [ -d "$CAM_REPO_DST" ]; then
 fi
 
 # =========
-# Commit + push
+# Commit + push + tag
 # =========
 git add "$CAM_REPO_DST" services/camera "$LOGDIR" "$CAMBACK" "$SYSDIR" || true
 git commit -m "$COMMIT_MSG" || echo "[i] Nothing to commit."
@@ -223,7 +222,6 @@ if ! git push origin main; then
   git push origin main
 fi
 
-# Tag with timestamp + host (+label)
 git tag -a "$TAG_BASE" -m "$COMMIT_MSG" || true
 git push origin "$TAG_BASE" || true
 

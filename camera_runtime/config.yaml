@@ -11,7 +11,7 @@ sensor:
 recording:
   resolution: 1280x720
   framerate: 30
-  duration_s: 10
+  duration_s: 6
   bitrate_kbps: 22000
   rotation: 0
 storage:
