@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# === SAVE AS: ~/projects/video-capture-node/scripts/backup_camera_to_github.sh ===
 set -euo pipefail
 
 # =========
@@ -13,17 +14,25 @@ CAM_REPO_DST="${CAM_REPO_DST:-camera_runtime}"       # repo mirror of live runti
 # Primary services you expect (explicit)
 CAM_SERVICES=( ${CAM_SERVICES_OVERRIDE:-camera-node camera-heartbeat} )
 
-# Optional human-readable label for this snapshot (e.g. "Clean Production Ready")
+# Optional human-readable label for this snapshot (e.g., "Clean Production Ready")
 LABEL="${LABEL:-}"
 
 DATE_HUMAN="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
 DATE_SAFE="$(date -u +'%Y%m%dT%H%M%SZ')"
 HOSTTAG="$(hostname | tr -c '[:alnum:]' '-')"
 LABEL_SAFE="$(printf '%s' "$LABEL" | tr '[:upper:]' '[:lower:]' | tr -cs '[:alnum:]' '-' | sed 's/^-//;s/-$//')"
-COMMIT_MSG="Camera backup ${DATE_HUMAN} on ${HOSTTAG}${LABEL:+ — $LABEL}"
-TAG_BASE="cam-${HOSTTAG}-${DATE_SAFE}${LABEL_SAFE:+-$LABEL_SAFE}"
 
-echo "[i] Camera backup started at $DATE_HUMAN (label: ${LABEL:-none})"
+# Extract node_id from config.yaml if present
+NODE_ID="unknown"
+if [ -f "$CAM_RUNTIME/config.yaml" ]; then
+  NODE_ID="$(awk -F: '/^[[:space:]]*node_id[[:space:]]*:/ {gsub(/ /,"",$2); print $2; exit}' "$CAM_RUNTIME/config.yaml" 2>/dev/null || echo unknown)"
+  [ -z "$NODE_ID" ] && NODE_ID="unknown"
+fi
+
+COMMIT_MSG="Camera backup ${DATE_HUMAN} on ${HOSTTAG}${LABEL:+ — $LABEL} (node_id=${NODE_ID})"
+TAG_BASE="cam-${NODE_ID}-${HOSTTAG}-${DATE_SAFE}${LABEL_SAFE:+-$LABEL_SAFE}"
+
+echo "[i] Camera backup started at $DATE_HUMAN (label: ${LABEL:-none}, node_id: ${NODE_ID})"
 
 # =========
 # Repo prep
@@ -68,7 +77,7 @@ SYSDIR="backups/system/$DATE_SAFE"
 CAMBACK="backups/camera"
 
 # =========
-# Runtime → repo mirror (FIXED EXCLUDES)
+# Runtime → repo mirror (fixed excludes)
 # =========
 if [ -d "$CAM_RUNTIME" ]; then
   echo "[i] Syncing $CAM_RUNTIME -> $REPO_DIR/$CAM_REPO_DST ..."
@@ -152,6 +161,8 @@ python3 --version 2>/dev/null | tee "$CAMBACK/python-version-$DATE_SAFE.txt" >/d
 # =========
 if [ -f "$CAM_RUNTIME/config.yaml" ]; then
   cp -f "$CAM_RUNTIME/config.yaml" "$CAMBACK/config-$DATE_SAFE.yaml"
+
+  # Redact secrets (auth_tokens/auth-token/auth_token)
   awk '
     BEGIN{inblock=0}
     /^[[:space:]]*auth_tokens:/ {print "auth_tokens: {REDACTED: true}"; inblock=1; next}
@@ -168,6 +179,7 @@ fi
 {
   echo "UTC: $DATE_HUMAN"
   echo "Host: $HOSTTAG"
+  echo "node_id: ${NODE_ID}"
   echo "Kernel: $(uname -a)"
   echo "OS: $(grep PRETTY_NAME /etc/os-release | cut -d= -f2- | tr -d '"'"'")"
   echo "GPU mem: $(vcgencmd get_mem gpu 2>/dev/null || echo n/a)"
@@ -189,11 +201,12 @@ sudo test -f /etc/modules && sudo cp -f /etc/modules "$SYSDIR/etc-modules.txt" |
 sudo test -d /etc/udev/rules.d && sudo rsync -a /etc/udev/rules.d/ "$SYSDIR/udev-rules.d/" || true
 
 # =========
-# Manifest
+# Minimal manifest (human friendly)
 # =========
 {
   echo "UTC: $DATE_HUMAN"
   echo "Host: $HOSTTAG"
+  echo "node_id: ${NODE_ID}"
   echo "Runtime: $CAM_RUNTIME"
   echo "Repo dst: $CAM_REPO_DST"
   echo "Services (explicit): ${CAM_SERVICES[*]}"
@@ -202,15 +215,15 @@ sudo test -d /etc/udev/rules.d && sudo rsync -a /etc/udev/rules.d/ "$SYSDIR/udev
 } > "$LOGDIR/manifest.txt"
 
 # =========
-# Tarball of runtime
+# Tarball of runtime (optional but handy)
 # =========
 if [ -d "$CAM_REPO_DST" ]; then
-  TAR="$CAMBACK/camera-runtime-$HOSTTAG-$DATE_SAFE${LABEL_SAFE:+-$LABEL_SAFE}.tar.gz"
+  TAR="$CAMBACK/camera-runtime-$NODE_ID-$HOSTTAG-$DATE_SAFE${LABEL_SAFE:+-$LABEL_SAFE}.tar.gz"
   tar -C "$CAM_REPO_DST" -czf "$TAR" .
 fi
 
 # =========
-# Commit + push + tag
+# Commit + push
 # =========
 git add "$CAM_REPO_DST" services/camera "$LOGDIR" "$CAMBACK" "$SYSDIR" || true
 git commit -m "$COMMIT_MSG" || echo "[i] Nothing to commit."
@@ -222,6 +235,8 @@ if ! git push origin main; then
   git push origin main
 fi
 
+# Tag with timestamp + host + node_id (+label)
+echo "[i] Tagging $TAG_BASE"
 git tag -a "$TAG_BASE" -m "$COMMIT_MSG" || true
 git push origin "$TAG_BASE" || true
 
