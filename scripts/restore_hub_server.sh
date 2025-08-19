@@ -1,51 +1,93 @@
-#!/bin/bash
-set -e
+# Save into your repo (on the hub):
+mkdir -p ~/video-capture-node/scripts
+cat > ~/video-capture-node/scripts/restore_hub_from_repo.sh <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
 
-echo "[RESTORE] Restoring Hub Server from repo..."
-
-# Paths
 REPO_DIR="$HOME/video-capture-node"
-TARGET_DIR="$HOME/hub_server"
+RUNTIME_DIR="$HOME/hub_server"
 DATA_DIR="$HOME/data"
+DB_PATH="$DATA_DIR/hub.db"
 
-# Stop services
-echo "[RESTORE] Stopping hub services..."
-sudo systemctl stop hub-api || true
-sudo systemctl stop hub-heartbeat || true
-sudo systemctl stop tft-ui || true
+echo "[i] Restoring Hub from repo ? runtime"
 
-# Replace hub_server code
-echo "[RESTORE] Syncing hub_server folder..."
-rm -rf "$TARGET_DIR"
-cp -r "$REPO_DIR/hub_server" "$TARGET_DIR"
+# 0) Ensure repo exists & up-to-date
+if [ ! -d "$REPO_DIR/.git" ]; then
+  echo "[!] Repo not found at $REPO_DIR"
+  echo "    git clone git@github.com:input86/video-capture-node.git \"$REPO_DIR\""
+  exit 1
+fi
+cd "$REPO_DIR"
+git fetch --tags --prune
+git checkout main
+git pull --rebase
 
-# Restore systemd service files
-echo "[RESTORE] Restoring service files..."
-sudo cp "$REPO_DIR/hub_server/services/"*.service /etc/systemd/system/
+# 1) Sync code into runtime (no venv/__pycache__)
+mkdir -p "$RUNTIME_DIR"
+rsync -av --delete \
+  --exclude ".git/" --exclude "venv/" \
+  --exclude "__pycache__/" --exclude "*.pyc" \
+  "$REPO_DIR/hub_server/" "$RUNTIME_DIR/"
 
-# Ensure data directory exists
-echo "[RESTORE] Ensuring data directory exists..."
+# 2) Python venv + deps
+cd "$RUNTIME_DIR"
+python3 -m venv venv || true
+source venv/bin/activate
+if [ -f requirements.txt ]; then
+  pip install -U pip wheel
+  pip install -r requirements.txt
+else
+  # Minimal deps fallback
+  pip install flask gunicorn requests pyyaml
+fi
+deactivate
+
+# 3) Install/refresh systemd services from repo if present
+copy_if() {
+  local src="$1" dst="$2"
+  if [ -f "$src" ]; then
+    sudo cp -f "$src" "$dst"
+    echo "[i] Installed $(basename "$dst")"
+  fi
+}
+copy_if "$REPO_DIR/services/hub/hub-api.service"       /etc/systemd/system/hub-api.service
+copy_if "$REPO_DIR/services/hub/hub-heartbeat.service" /etc/systemd/system/hub-heartbeat.service
+copy_if "$REPO_DIR/services/hub/tft-ui.service"        /etc/systemd/system/tft-ui.service
+
+sudo systemctl daemon-reload
+
+# 4) Ensure data dir + DB exist (create if missing; don’t drop existing)
 mkdir -p "$DATA_DIR"
-chmod 755 "$DATA_DIR"
-
-# Install dependencies
-echo "[RESTORE] Installing Python dependencies..."
-python3 -m venv "$TARGET_DIR/venv"
-"$TARGET_DIR/venv/bin/pip" install --upgrade pip
-if [ -f "$TARGET_DIR/requirements.txt" ]; then
-    "$TARGET_DIR/venv/bin/pip" install -r "$TARGET_DIR/requirements.txt"
+if [ ! -f "$DB_PATH" ]; then
+  echo "[i] Creating new hub.db at $DB_PATH"
+  sqlite3 "$DB_PATH" <<'SQL'
+CREATE TABLE IF NOT EXISTS nodes (
+  node_id TEXT PRIMARY KEY,
+  last_seen TEXT,
+  status TEXT,
+  ip TEXT,
+  version TEXT,
+  free_space_pct REAL,
+  queue_len INTEGER
+);
+CREATE TABLE IF NOT EXISTS clips (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  node_id TEXT,
+  filepath TEXT,
+  timestamp TEXT
+);
+SQL
 fi
 
-# Reload and enable services
-echo "[RESTORE] Reloading systemd and enabling services..."
-sudo systemctl daemon-reload
-sudo systemctl enable hub-api hub-heartbeat tft-ui
+# 5) Start services
+sudo systemctl enable hub-api hub-heartbeat tft-ui --now || true
+sleep 2
 
-# Start services
-echo "[RESTORE] Starting services..."
-sudo systemctl start hub-api
-sudo systemctl start hub-heartbeat
-sudo systemctl start tft-ui
+echo "[i] Checking ports and endpoints…"
+ss -tulpn | egrep ':5000|:5050' || true
+curl -s http://127.0.0.1:5000/        | head -c 120; echo
+curl -s http://127.0.0.1:5050/api/v1/nodes | head -c 200; echo
 
-echo "[RESTORE] Hub Server restore completed successfully."
-
+echo "[?] Hub restore complete."
+EOF
+chmod +x ~/video-capture-node/scripts/restore_hub_from_repo.sh

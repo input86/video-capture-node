@@ -1,63 +1,70 @@
-#!/bin/bash
-# restore_camera_node.sh
-# Restores a Raspberry Pi Zero 2 W camera node from the latest repo backup
-
-set -e
-
-echo "=== Restoring Camera Node from GitHub Backup ==="
-
-# Stop running services
-sudo systemctl stop camera-node.service || true
-sudo systemctl stop camera-heartbeat.service || true
-
-# Backup old installation
-BACKUP_DIR=~/camera_node_backup_$(date +%Y%m%d_%H%M%S)
-if [ -d ~/camera_node ]; then
-    echo "Backing up existing ~/camera_node to $BACKUP_DIR"
-    mv ~/camera_node "$BACKUP_DIR"
-fi
-
-# Ensure scripts/ exists in the repo
+# Save into your repo (on the camera):
 mkdir -p ~/video-capture-node/scripts
+cat > ~/video-capture-node/scripts/restore_camera_from_repo.sh <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
 
-# Clone or update repo
-if [ ! -d ~/video-capture-node/.git ]; then
-    echo "Cloning repo fresh..."
-    git clone git@github.com:input86/video-capture-node.git ~/video-capture-node
-else
-    echo "Updating existing repo..."
-    cd ~/video-capture-node
-    git reset --hard
-    git pull
+REPO_DIR="$HOME/video-capture-node"
+RUNTIME_DIR="$HOME/camera_node"
+
+echo "[i] Restoring Camera Node from repo ? runtime"
+
+# 0) Ensure repo exists & up-to-date
+if [ ! -d "$REPO_DIR/.git" ]; then
+  echo "[!] Repo not found at $REPO_DIR"
+  echo "    git clone git@github.com:input86/video-capture-node.git \"$REPO_DIR\""
+  exit 1
 fi
+cd "$REPO_DIR"
+git fetch --tags --prune
+git checkout main
+git pull --rebase
 
-# Deploy from repo to ~/camera_node
-cp -r ~/video-capture-node/camera_node ~/camera_node
+# 1) Sync code into runtime (no venv/__pycache__/tmp)
+mkdir -p "$RUNTIME_DIR"
+rsync -av --delete \
+  --exclude ".git/" --exclude "venv/" \
+  --exclude "__pycache__/" --exclude "*.pyc" \
+  --exclude "tmp/" \
+  "$REPO_DIR/camera_node/" "$RUNTIME_DIR/"
 
-# Install services
-echo "Installing systemd services..."
-sudo cp ~/camera_node/services/camera-node.service /etc/systemd/system/
-sudo cp ~/camera_node/services/camera-heartbeat.service /etc/systemd/system/
-
-# Reload and enable services
-sudo systemctl daemon-reload
-sudo systemctl enable camera-node.service
-sudo systemctl enable camera-heartbeat.service
-
-# Create and activate venv
-echo "Setting up Python venv..."
-cd ~/camera_node
-python3 -m venv venv
+# 2) Python venv + deps
+cd "$RUNTIME_DIR"
+python3 -m venv venv || true
 source venv/bin/activate
-
-# Install dependencies from requirements.txt if present
 if [ -f requirements.txt ]; then
-    pip install --upgrade pip
-    pip install -r requirements.txt
+  pip install -U pip wheel
+  pip install -r requirements.txt
+else
+  # Minimal deps fallback
+  pip install requests pyyaml
 fi
+deactivate
 
-# Start services
-sudo systemctl start camera-node.service
-sudo systemctl start camera-heartbeat.service
+# 3) Install/refresh systemd services from repo if present
+copy_if() {
+  local src="$1" dst="$2"
+  if [ -f "$src" ]; then
+    sudo cp -f "$src" "$dst"
+    echo "[i] Installed $(basename "$dst")"
+  fi
+}
+copy_if "$REPO_DIR/services/camera/camera-node.service"      /etc/systemd/system/camera-node.service
+copy_if "$REPO_DIR/services/camera/camera-heartbeat.service" /etc/systemd/system/camera-heartbeat.service
 
-echo "=== Camera Node Restore Complete ==="
+sudo systemctl daemon-reload
+
+# 4) Ensure basic runtime dirs
+mkdir -p "$RUNTIME_DIR/tmp" "$RUNTIME_DIR/queue"
+
+# 5) Start services
+sudo systemctl enable camera-node camera-heartbeat --now || true
+sleep 2
+
+echo "[i] Tail a few lines to confirm:"
+sudo journalctl -u camera-node -n 30 --no-pager || true
+sudo journalctl -u camera-heartbeat -n 30 --no-pager || true
+
+echo "[?] Camera restore complete."
+EOF
+chmod +x ~/video-capture-node/scripts/restore_camera_from_repo.sh
