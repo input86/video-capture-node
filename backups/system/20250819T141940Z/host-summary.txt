@@ -1,0 +1,19 @@
+UTC: 2025-08-19T14:19:40Z
+Host: hub-cam01-
+Kernel: Linux hub-cam01 6.12.25+rpt-rpi-v8 #1 SMP PREEMPT Debian 1:6.12.25-1+rpt1 (2025-04-30) aarch64 GNU/Linux
+OS: Debian GNU/Linux 12 (bookworm)
+GPU mem: gpu=64M
+Camera: supported=0 detected=0, libcamera interfaces=0
+
+User/groups (pi): pi adm dialout cdrom sudo audio video plugdev games users input render netdev spi i2c gpio
+
+Interfaces:
+lo               UNKNOWN        127.0.0.1/8 ::1/128 
+wlan0            UP             192.168.0.48/24 192.168.0.151/24 fd9f:5182:4a7d:b691:eec0:19bf:d54b:f885/64 fd9f:5182:4a7d:b691:b392:614:b67a:d8d6/64 fe80::7197:344d:c1bb:2c65/64 fe80::4a69:b90a:5f1c:703c/64 
+
+Routes:
+default via 192.168.0.1 dev wlan0 src 192.168.0.151 metric 3002 
+192.168.0.0/24 dev wlan0 proto dhcp scope link src 192.168.0.151 metric 3002 
+
+WiFi networks (recent):
+highlight
