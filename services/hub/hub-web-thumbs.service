@@ -1,0 +1,12 @@
+[Unit]
+Description=Hub Web Admin - Thumbnail Builder
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=pi
+Group=pi
+EnvironmentFile=-/etc/default/hub-web-admin
+WorkingDirectory=/home/pi/hub_web_admin
+ExecStart=/home/pi/hub_web_admin/venv/bin/python /home/pi/hub_web_admin/thumbs.py --prune
+Nice=10

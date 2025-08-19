@@ -1,0 +1,21 @@
+[Unit]
+Description=Hub Web Admin (Gunicorn behind Nginx)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+EnvironmentFile=-/etc/default/hub-web-admin
+WorkingDirectory=/home/pi/hub_web_admin
+# Gunicorn binds only to localhost; Nginx proxies from :80
+ExecStart=/home/pi/hub_web_admin/venv/bin/gunicorn -w 2 -k gthread --threads 2 -b 127.0.0.1:8080 app:app
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=30
+# Sensible file limit for serving many requests
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
