@@ -1,0 +1,253 @@
+📘 Camera Node Install/Restore Manual
+0) What you’ll need
+
+A Raspberry Pi Zero 2 W (or your cam node hardware) with Raspberry Pi OS.
+
+Network access to your hub and to GitHub.
+
+Your GitHub repo: git@github.com:input86/video-capture-node.git
+
+The auth token for each camera you deploy (from the hub’s auth_tokens map).
+
+1) First‑time GitHub SSH setup on a camera
+
+Do this once per new Pi (e.g., for cam02), so it can clone/pull your repo over SSH.
+
+# 1) Set identity (shows up in backup commits, harmless)
+git config --global user.name  "Pi Camera ($(hostname))"
+git config --global user.email "pi@$(hostname -f || hostname)"
+
+# 2) Generate SSH key (press Enter for defaults; no passphrase recommended for headless)
+ssh-keygen -t ed25519 -C "pi@$(hostname -f || hostname)"
+
+# 3) Show the public key, copy it to your clipboard
+cat ~/.ssh/id_ed25519.pub
+
+
+Now add the key to GitHub:
+GitHub → Settings → SSH and GPG keys → New SSH key → paste the public key you just printed.
+
+Test connection:
+
+ssh -T git@github.com
+# If prompted to continue, type: yes
+# You should see a success message from GitHub
+
+2) Get the repo onto the camera
+mkdir -p ~/projects
+cd ~/projects
+git clone git@github.com:input86/video-capture-node.git
+cd video-capture-node
+
+
+You now have your repo on the node at: ~/projects/video-capture-node
+
+3) Put the installer script in place (one‑time)
+
+If you don’t already have it there, create the file exactly as below.
+
+mkdir -p ~/projects/video-capture-node/scripts
+nano ~/projects/video-capture-node/scripts/install_or_restore_camera.sh
+
+
+Paste the full script you saved earlier (the install_or_restore_camera.sh we prepared), then:
+
+chmod +x ~/projects/video-capture-node/scripts/install_or_restore_camera.sh
+
+4) How to restore a broken camera (e.g., cam01)
+Option A — Restore cam01 to the latest main (fastest)
+
+Use when you just want the latest stable code in main and keep the node’s existing config.yaml.
+
+~/projects/video-capture-node/scripts/install_or_restore_camera.sh --main
+
+
+Preserves /home/pi/camera_node/config.yaml (default PRESERVE_CONFIG=true)
+
+Reinstalls Python deps (if needed)
+
+Installs/updates systemd services
+
+Enables/starts camera-* units
+
+Option B — Restore cam01 to a known tag (exact rollback)
+
+Use when you want the exact code from a labeled snapshot (e.g., your “Clean Production Ready” tag).
+
+cd ~/projects/video-capture-node
+git fetch --tags
+
+# List tags to find the one you want
+git tag --list | sort
+
+# Restore to a specific tag (replace TAG with the actual tag from your backups)
+~/projects/video-capture-node/scripts/install_or_restore_camera.sh \
+  --tag TAG
+
+
+Examples of tag naming you created:
+
+cam-cam01-hub-cam01-20250819T141609Z-clean-production-ready
+
+
+Tip: If you also want to reset the config (e.g., change token), run with PRESERVE_CONFIG=false and pass new values:
+
+PRESERVE_CONFIG=false \
+NODE_ID=cam01 \
+HUB_URL=http://192.168.0.150:8080 \
+AUTH_TOKEN=PUT_CAM01_TOKEN_HERE \
+~/projects/video-capture-node/scripts/install_or_restore_camera.sh --tag TAG
+
+5) How to install a fresh camera (e.g., cam02)
+Step 5.1 — Make sure SSH to GitHub works (Section 1) and the repo is cloned (Section 2)
+Step 5.2 — Choose the source you want to deploy
+
+Use the exact cam01 snapshot tag (recommended for production consistency), or
+
+Use main if you’re comfortable deploying latest
+
+Step 5.3 — Run the installer with cam02’s identity
+
+You must provide NODE_ID, AUTH_TOKEN for cam02, and (usually) the HUB_URL.
+
+From a tag (recommended):
+
+cd ~/projects/video-capture-node
+git fetch --tags
+
+NODE_ID=cam02 \
+HUB_URL=http://192.168.0.150:8080 \
+AUTH_TOKEN=PUT_CAM02_TOKEN_HERE \
+~/projects/video-capture-node/scripts/install_or_restore_camera.sh \
+  --tag cam-cam01-20250819T141609Z-clean-production-ready
+
+
+From main:
+
+NODE_ID=cam02 \
+HUB_URL=http://192.168.0.150:8080 \
+AUTH_TOKEN=PUT_CAM02_TOKEN_HERE \
+~/projects/video-capture-node/scripts/install_or_restore_camera.sh \
+  --main
+
+
+What this does:
+
+Syncs code from camera_runtime/ in the repo → /home/pi/camera_node
+
+Creates/updates a venv and installs Python deps
+
+Writes config.yaml (because none existed) with your NODE_ID, HUB_URL, AUTH_TOKEN
+
+Installs/updates camera-* systemd services
+
+Enables/starts services
+
+6) Post‑install checks (both restore & fresh)
+# Check services are running
+systemctl status camera-node --no-pager
+systemctl status camera-heartbeat --no-pager
+
+# Look for errors, recent logs
+journalctl -u camera-node -n 120 --no-pager
+journalctl -u camera-heartbeat -n 120 --no-pager
+
+# Confirm config
+cat /home/pi/camera_node/config.yaml
+
+
+Trigger the VL53L0X briefly and confirm that the hub receives a clip from this node.
+If you have a preview endpoint on the node, test it as well.
+
+7) Promotion workflow (cam01 → cam02/03…)
+
+This keeps you fast and safe:
+
+Develop & test on cam01 (edit /home/pi/camera_node, iterate).
+
+When stable, run the camera backup script on cam01 with a label:
+
+LABEL="Clean Production Ready" \
+~/projects/video-capture-node/scripts/backup_camera_to_github.sh
+
+
+This pushes camera_runtime/, services, logs, and creates a tag.
+
+On cam02, deploy from that tag (Section 5.3), setting NODE_ID and AUTH_TOKEN for cam02.
+
+Repeat for cam03… using the same tag.
+
+This guarantees all cameras run exactly the code you validated on cam01.
+
+8) Common options & environment variables (installer)
+
+--tag TAG — restore/install from a specific repo tag
+
+--commit SHA — restore/install from a specific commit
+
+--main — restore/install from latest main
+
+NODE_ID=cam02 — sets node_id when generating config
+
+HUB_URL=http://192.168.0.150:8080 — hub base URL
+
+AUTH_TOKEN=... — token for this node
+
+PRESERVE_CONFIG=true|false — keep or rebuild config.yaml (default: true)
+
+START_ENABLE=true|false — auto enable/start services (default: true)
+
+9) Troubleshooting quickies
+
+SSH to GitHub fails: Check ssh -T git@github.com. Add your key to GitHub.
+
+Permission denied on repo: Ensure you cloned via SSH (git@github.com:...) not HTTPS.
+
+Services don’t start:
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now camera-node camera-heartbeat
+journalctl -u camera-node -n 200 --no-pager
+
+
+Python deps missing: Re‑run installer (--main or --tag) — it recreates/repairs the venv.
+
+I2C not working: Ensure dtparam=i2c_arm=on exists in /boot/config.txt, reboot if necessary, sudo adduser pi i2c.
+
+10) Quick reference (copy‑paste)
+
+New camera (cam02) from validated tag:
+
+# One-time on cam02
+git config --global user.name  "Pi Camera ($(hostname))"
+git config --global user.email "pi@$(hostname -f || hostname)"
+ssh-keygen -t ed25519 -C "pi@$(hostname -f || hostname)"
+cat ~/.ssh/id_ed25519.pub   # add to GitHub → SSH keys
+ssh -T git@github.com
+
+# Get repo + run installer
+mkdir -p ~/projects && cd ~/projects
+git clone git@github.com:input86/video-capture-node.git
+chmod +x ~/projects/video-capture-node/scripts/install_or_restore_camera.sh
+cd ~/projects/video-capture-node && git fetch --tags
+
+NODE_ID=cam02 \
+HUB_URL=http://192.168.0.150:8080 \
+AUTH_TOKEN=PUT_CAM02_TOKEN_HERE \
+~/projects/video-capture-node/scripts/install_or_restore_camera.sh \
+  --tag cam-cam01-20250819T141609Z-clean-production-ready
+
+
+Restore cam01 to latest main:
+
+~/projects/video-capture-node/scripts/install_or_restore_camera.sh --main
+
+
+Restore cam01 to a known tag and rewrite config:
+
+PRESERVE_CONFIG=false \
+NODE_ID=cam01 \
+HUB_URL=http://192.168.0.150:8080 \
+AUTH_TOKEN=PUT_CAM01_TOKEN_HERE \
+~/projects/video-capture-node/scripts/install_or_restore_camera.sh \
+  --tag cam-cam01-20250819T141609Z-clean-production-ready
