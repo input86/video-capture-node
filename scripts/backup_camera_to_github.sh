@@ -1,32 +1,40 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# --- Settings (from inventory) ---
-REPO_SSH="git@github.com:input86/video-capture-node.git"
-REPO_DIR="$HOME/projects/video-capture-node"
+# =========
+# Settings
+# =========
+REPO_SSH="${REPO_SSH:-git@github.com:input86/video-capture-node.git}"
+REPO_DIR="${REPO_DIR:-$HOME/projects/video-capture-node}"
 
-CAM_RUNTIME="/home/pi/camera_node"        # live code
-CAM_REPO_DST="camera_runtime"             # repo mirror of live runtime
+CAM_RUNTIME="${CAM_RUNTIME:-/home/pi/camera_node}"   # live code
+CAM_REPO_DST="${CAM_REPO_DST:-camera_runtime}"       # repo mirror of live runtime
 
-CAM_SERVICES=(camera-node camera-heartbeat)
+# Primary services you expect (explicit)
+CAM_SERVICES=( ${CAM_SERVICES_OVERRIDE:-camera-node camera-heartbeat} )
+
+# Optional human-readable label for this snapshot (e.g. "Clean Production Ready")
+LABEL="${LABEL:-}"
 
 DATE_HUMAN="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
 DATE_SAFE="$(date -u +'%Y%m%dT%H%M%SZ')"
 HOSTTAG="$(hostname | tr -c '[:alnum:]' '-')"
-COMMIT_MSG="Camera backup ${DATE_HUMAN} on ${HOSTTAG}"
-TAG_BASE="cam-backup-${DATE_SAFE%-*}"
-TAG_NAME="$TAG_BASE"
+LABEL_SAFE="$(printf '%s' "$LABEL" | tr '[:upper:]' '[:lower:]' | tr -cs '[:alnum:]' '-' | sed 's/^-//;s/-$//')"
+COMMIT_MSG="Camera backup ${DATE_HUMAN} on ${HOSTTAG}${LABEL:+ — $LABEL}"
+TAG_BASE="cam-${HOSTTAG}-${DATE_SAFE}${LABEL_SAFE:+-$LABEL_SAFE}"
 
-echo "[i] Camera backup started at $DATE_HUMAN"
+echo "[i] Camera backup started at $DATE_HUMAN (label: ${LABEL:-none})"
 
-# --- Ensure repo checkout (main only) ---
+# =========
+# Repo prep
+# =========
 if [ ! -d "$REPO_DIR/.git" ]; then
   echo "[i] Cloning repo into $REPO_DIR"
   git clone "$REPO_SSH" "$REPO_DIR"
 fi
 cd "$REPO_DIR"
 
-# Git identity & safety knobs (idempotent)
+# Git identity & safe defaults
 git config --global user.email >/dev/null 2>&1 || git config --global user.email "pi@$(hostname -f || hostname)"
 git config --global user.name  >/dev/null 2>&1 || git config --global user.name  "Pi Camera ($(hostname))"
 git config --global pull.rebase true
@@ -34,9 +42,8 @@ git config --global rebase.autostash true
 git config --global fetch.prune true
 git config --global fetch.pruneTags true
 
-# Prepare main cleanly
-git fetch origin --tags --prune --prune-tags
-git checkout main || git checkout -b main
+git fetch origin --tags --prune --prune-tags || true
+git checkout main 2>/dev/null || git checkout -b main
 
 # If tree is dirty before pulling, checkpoint or stash
 if ! git diff --quiet || ! git diff --cached --quiet; then
@@ -44,22 +51,31 @@ if ! git diff --quiet || ! git diff --cached --quiet; then
   git commit -m "checkpoint before sync: ${DATE_HUMAN}" || git stash --include-untracked
 fi
 
-# Rebase on latest main
 git pull --rebase origin main || true
 
-# --- Layout ---
-mkdir -p "$CAM_REPO_DST" services/camera backups/logs/"$DATE_SAFE" backups/camera
+# =========
+# Layout
+# =========
+mkdir -p \
+  "$CAM_REPO_DST" \
+  services/camera \
+  backups/logs/"$DATE_SAFE" \
+  backups/camera \
+  backups/system/"$DATE_SAFE"
 
-# --- Mirror runtime → repo (exclude venv/secrets/caches) ---
+LOGDIR="backups/logs/$DATE_SAFE"
+SYSDIR="backups/system/$DATE_SAFE"
+CAMBACK="backups/camera"
+
+# =========
+# Runtime → repo mirror
+# =========
 if [ -d "$CAM_RUNTIME" ]; then
   echo "[i] Syncing $CAM_RUNTIME -> $REPO_DIR/$CAM_REPO_DST ..."
-  rsync -av --delete \
+  rsync -a --delete \
     --exclude ".git/" \
-    --exclude "venv/" \
-    --exclude ".venv/" \
-    --exclude "__pycache__/" \
-    --exclude ".mypy_cache/" \
-    --exclude ".pytest_cache/" \
+    --exclude "venv/" --exclude ".venv/" \
+    --exclude "__pycache__/" ".mypy_cache/" ".pytest_cache/" \
     --exclude "*.pyc" \
     --exclude ".env" --exclude "*.env" \
     "$CAM_RUNTIME/" "$CAM_REPO_DST/"
@@ -67,7 +83,24 @@ else
   echo "[!] Camera runtime not found at $CAM_RUNTIME (skipping code sync)"
 fi
 
-# --- Save systemd service units ---
+# =========
+# Discover services
+# =========
+echo "[i] Discovering camera-* services..."
+mapfile -t auto_svcs < <(systemctl list-unit-files --type=service --no-legend \
+  | awk '{print $1}' | grep -E '^camera-.*\.service$' | sed 's/\.service$//') || true
+
+# Merge unique service names
+ALL_SERVICES=("${CAM_SERVICES[@]}")
+for s in "${auto_svcs[@]:-}"; do
+  if [[ ! " ${ALL_SERVICES[*]} " =~ " ${s} " ]]; then
+    ALL_SERVICES+=("$s")
+  fi
+done
+
+# =========
+# Save service units + status + enablement + logs
+# =========
 save_unit() {
   local svc="$1"
   local dest="services/camera/${svc}.service"
@@ -80,55 +113,118 @@ save_unit() {
     echo "[i] (missing) $svc"
   fi
 }
-echo "[i] Saving service files..."
-for s in "${CAM_SERVICES[@]}"; do
+
+echo "[i] Saving service files & diagnostics..."
+for s in "${ALL_SERVICES[@]}"; do
   save_unit "$s"
+  # status & enablement snapshot
+  {
+    echo "### systemctl status $s"
+    systemctl status "$s" --no-pager || true
+    echo
+    echo "### is-enabled $s"
+    systemctl is-enabled "$s" || true
+    echo
+    echo "### show $s (selected)"
+    systemctl show "$s" -p Id -p FragmentPath -p Description -p ActiveState -p SubState -p ExecStart || true
+  } > "$LOGDIR/${s}-status.txt"
+  # last 1000 lines of journal
+  sudo journalctl -u "$s" -n 1000 --no-pager > "$LOGDIR/${s}.log" 2>/dev/null || true
 done
 
-# --- Logs + pip freeze + config snapshot ---
-echo "[i] Capturing logs..."
-for s in "${CAM_SERVICES[@]}"; do
-  sudo journalctl -u "$s" -n 400 --no-pager > "backups/logs/$DATE_SAFE/${s}.log" 2>/dev/null || true
-done
-
-if [ -f "$CAM_RUNTIME/venv/bin/pip" ]; then
-  "$CAM_RUNTIME/venv/bin/pip" freeze > "backups/camera/pip-freeze-$DATE_SAFE.txt" || true
+# =========
+# Python env snapshot
+# =========
+if [ -x "$CAM_RUNTIME/venv/bin/pip" ]; then
+  "$CAM_RUNTIME/venv/bin/pip" freeze > "$CAMBACK/pip-freeze-$DATE_SAFE.txt" || true
 fi
+python3 --version 2>/dev/null | tee "$CAMBACK/python-version-$DATE_SAFE.txt" >/dev/null || true
 
-# Save current config.yaml safely
+# =========
+# Config: raw + redacted
+# =========
 if [ -f "$CAM_RUNTIME/config.yaml" ]; then
-  cp -f "$CAM_RUNTIME/config.yaml" "backups/camera/config-$DATE_SAFE.yaml"
+  cp -f "$CAM_RUNTIME/config.yaml" "$CAMBACK/config-$DATE_SAFE.yaml"
+
+  # Redact secrets (auth_tokens/auth-token/auth_token)
+  awk '
+    BEGIN{inblock=0}
+    /^[[:space:]]*auth_tokens:/ {print "auth_tokens: {REDACTED: true}"; inblock=1; next}
+    inblock && /^[^[:space:]]/ {inblock=0}
+    {print}
+  ' "$CAM_RUNTIME/config.yaml" \
+  | sed -E 's/(auth[-_]?token[s]?[[:space:]]*:[[:space:]]*).*/\1REDACTED/i' \
+  > "$CAMBACK/config-$DATE_SAFE.redacted.yaml"
 fi
 
-# Minimal manifest
+# =========
+# System snapshot (helps rebuild identical nodes)
+# =========
 {
   echo "UTC: $DATE_HUMAN"
   echo "Host: $HOSTTAG"
   echo "Kernel: $(uname -a)"
-  echo "Python: $(python3 --version 2>/dev/null)"
+  echo "OS: $(grep PRETTY_NAME /etc/os-release | cut -d= -f2- | tr -d '"'"'")"
+  echo "GPU mem: $(vcgencmd get_mem gpu 2>/dev/null || echo n/a)"
+  echo "Camera: $(vcgencmd get_camera 2>/dev/null || echo n/a)"
   echo
+  echo "User/groups (pi): $(id -nG pi 2>/dev/null || true)"
+  echo
+  echo "Interfaces:"
+  ip -br a || true
+  echo
+  echo "Routes:"
+  ip route || true
+  echo
+  echo "WiFi networks (recent):"
+  sudo awk -F= '/ssid=/{print $2}' /etc/NetworkManager/system-connections/* 2>/dev/null | sort -u || true
+} > "$SYSDIR/host-summary.txt"
+
+dpkg-query -W -f='${binary:Package}\t${Version}\n' > "$SYSDIR/packages.txt" || true
+crontab -l > "$SYSDIR/crontab-pi.txt" 2>/dev/null || true
+sudo test -f /etc/crontab && sudo cp -f /etc/crontab "$SYSDIR/crontab-root.txt" || true
+
+# Boot & modules (useful for overlays and I2C/spi settings)
+sudo test -f /boot/config.txt && sudo cp -f /boot/config.txt "$SYSDIR/boot-config.txt" || true
+sudo test -f /etc/modules && sudo cp -f /etc/modules "$SYSDIR/etc-modules.txt" || true
+sudo test -d /etc/udev/rules.d && sudo rsync -a /etc/udev/rules.d/ "$SYSDIR/udev-rules.d/" || true
+
+# =========
+# Minimal manifest (human friendly)
+# =========
+{
+  echo "UTC: $DATE_HUMAN"
+  echo "Host: $HOSTTAG"
   echo "Runtime: $CAM_RUNTIME"
   echo "Repo dst: $CAM_REPO_DST"
-  echo "Services: ${CAM_SERVICES[*]}"
-} > "backups/logs/$DATE_SAFE/manifest.txt"
+  echo "Services (explicit): ${CAM_SERVICES[*]}"
+  echo "Services (auto): ${auto_svcs[*]:-none}"
+  echo "Label: ${LABEL:-none}"
+} > "$LOGDIR/manifest.txt"
 
-# --- Commit locally ---
-git add "$CAM_REPO_DST" services/camera backups/logs/"$DATE_SAFE" backups/camera || true
+# =========
+# Tarball of runtime (optional but handy)
+# =========
+if [ -d "$CAM_REPO_DST" ]; then
+  TAR="$CAMBACK/camera-runtime-$HOSTTAG-$DATE_SAFE${LABEL_SAFE:+-$LABEL_SAFE}.tar.gz"
+  tar -C "$CAM_REPO_DST" -czf "$TAR" .
+fi
+
+# =========
+# Commit + push
+# =========
+git add "$CAM_REPO_DST" services/camera "$LOGDIR" "$CAMBACK" "$SYSDIR" || true
 git commit -m "$COMMIT_MSG" || echo "[i] Nothing to commit."
 
-# --- Push (with one-shot rebase retry on rejection) ---
 if ! git push origin main; then
   echo "[i] Push rejected; rebasing on origin/main and retrying..."
   git fetch origin
-  git rebase origin/main
+  git rebase origin/main || true
   git push origin main
 fi
 
-# --- Tag (optional; non-disruptive) ---
-if git ls-remote --tags origin | grep -q "refs/tags/$TAG_BASE$"; then
-  TAG_NAME="${TAG_BASE}-${HOSTTAG}-${DATE_SAFE}"
-fi
-git tag -a "$TAG_NAME" -m "$COMMIT_MSG" || true
-git push origin "$TAG_NAME"
+# Tag with timestamp + host (+label)
+git tag -a "$TAG_BASE" -m "$COMMIT_MSG" || true
+git push origin "$TAG_BASE" || true
 
-echo "[✓] Camera backup complete → $REPO_DIR ($TAG_NAME)"
+echo "[✓] Camera backup complete → $REPO_DIR (tag: $TAG_BASE)"
