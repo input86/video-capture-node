@@ -1,0 +1,22 @@
+### systemctl status tft-ui
+● tft-ui.service - TFT UI Service
+     Loaded: loaded (/etc/systemd/system/tft-ui.service; enabled; preset: enabled)
+     Active: active (running) since Tue 2025-08-19 09:21:30 EDT; 3h 0min ago
+   Main PID: 1159 (python)
+      Tasks: 2 (limit: 4458)
+        CPU: 3min 56.736s
+     CGroup: /system.slice/tft-ui.service
+             └─1159 /home/pi/hub_server/venv/bin/python /home/pi/hub_server/tft_ui.py
+
+Aug 19 09:21:30 hub-server systemd[1]: Started tft-ui.service - TFT UI Service.
+
+### is-enabled tft-ui
+enabled
+
+### show tft-ui (selected)
+ExecStart={ path=/home/pi/hub_server/venv/bin/python ; argv[]=/home/pi/hub_server/venv/bin/python /home/pi/hub_server/tft_ui.py ; ignore_errors=no ; start_time=[Tue 2025-08-19 09:21:30 EDT] ; stop_time=[n/a] ; pid=1159 ; code=(null) ; status=0/0 }
+Id=tft-ui.service
+Description=TFT UI Service
+ActiveState=active
+SubState=running
+FragmentPath=/etc/systemd/system/tft-ui.service

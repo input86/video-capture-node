@@ -17,6 +17,36 @@
   <div id="nostream" class="text-muted">Preview not running</div>
 </div>
 
+<!-- Sensor panel -->
+<div class="mt-3">
+  <div class="card">
+    <div class="card-body d-flex flex-wrap align-items-center gap-3">
+      <div>
+        <div class="text-muted small">Distance</div>
+        <div id="distVal" class="fs-4">— mm</div>
+      </div>
+      <div>
+        <div class="text-muted small">Threshold</div>
+        <div id="threshVal" class="fs-5">— mm</div>
+      </div>
+      <div class="ms-auto">
+        <span id="triggerBadge" class="badge rounded-pill bg-secondary">No data</span>
+      </div>
+      <div class="w-100"></div>
+      <div class="w-100">
+        <div class="text-muted small mb-1">Distance vs. Threshold</div>
+        <div class="progress" style="height: 8px;">
+          <div id="distBar" class="progress-bar" role="progressbar" style="width: 0%;" aria-valuemin="0" aria-valuemax="100"></div>
+        </div>
+        <div class="d-flex justify-content-between small text-muted mt-1">
+          <span>Closer</span><span>Farther</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="form-text mt-1">Live sensor reads from the node (VL53L0X). Updates ~2×/second.</div>
+</div>
+
 <script>
 const camId = {{ camera_id|tojson }};
 const host = {{ (endpoint.ssh_host or '')|tojson }};
@@ -28,13 +58,81 @@ async function postJSON(url, body) {
   return data;
 }
 
+let sensorTimer = null;
+
+function setBadge(state) {
+  const el = document.getElementById('triggerBadge');
+  if (state === 'trigger') { el.className = 'badge rounded-pill bg-danger'; el.textContent = 'Would trigger'; }
+  else if (state === 'no-trigger') { el.className = 'badge rounded-pill bg-success'; el.textContent = 'Clear'; }
+  else { el.className = 'badge rounded-pill bg-secondary'; el.textContent = 'No data'; }
+}
+
+function updateSensorUI(obj) {
+  const dEl = document.getElementById('distVal');
+  const tEl = document.getElementById('threshVal');
+  const bar = document.getElementById('distBar');
+
+  if (!obj || obj.ok === false) {
+    dEl.textContent = '— mm';
+    tEl.textContent = '— mm';
+    bar.style.width = '0%';
+    setBadge('no-data');
+    return;
+  }
+
+  const dist = obj.distance_mm ?? null;
+  const thr  = obj.threshold_mm ?? null;
+  const would = !!obj.would_trigger;
+
+  dEl.textContent = (dist !== null) ? `${dist} mm` : '— mm';
+  tEl.textContent = (thr  !== null) ? `${thr} mm`  : '— mm';
+
+  // Progress: clamp to [0..200% of threshold] so bar stays sensible.
+  let pct = 0;
+  if (dist !== null && thr && thr > 0) {
+    pct = Math.max(0, Math.min(100, Math.round((dist / (thr*2)) * 100)));
+  }
+  bar.style.width = pct + '%';
+  bar.setAttribute('aria-valuenow', pct);
+  bar.className = 'progress-bar ' + (would ? 'bg-danger' : 'bg-success');
+
+  setBadge(would ? 'trigger' : 'no-trigger');
+}
+
+async function pollSensorOnce() {
+  if (!host) { return; }
+  try {
+    const res = await fetch(`http://${host}:8080/api/live/sensor`, {cache: 'no-cache'});
+    const obj = await res.json().catch(()=> ({}));
+    updateSensorUI(obj);
+  } catch (e) {
+    // transient network / CORS / node reboot: just show no-data
+    updateSensorUI(null);
+  }
+}
+
+function startSensorPolling() {
+  // Do an immediate read, then poll every 500ms
+  pollSensorOnce();
+  if (sensorTimer) clearInterval(sensorTimer);
+  sensorTimer = setInterval(pollSensorOnce, 500);
+}
+function stopSensorPolling() {
+  if (sensorTimer) clearInterval(sensorTimer);
+  sensorTimer = null;
+  // Keep last reading on screen; if you prefer to clear, uncomment below line:
+  // updateSensorUI(null);
+}
+
 async function startPreview() {
   await postJSON('/action/secure/preview/start', {camera_id: camId});
   document.getElementById('stream').src = `http://${host}:8080/api/live/mjpeg?ts=${Date.now()}`;
   document.getElementById('stream').style.display = '';
   document.getElementById('nostream').style.display = 'none';
+  startSensorPolling();
 }
 async function stopPreview() {
+  stopSensorPolling();
   await postJSON('/action/secure/preview/stop', {camera_id: camId});
   const img = document.getElementById('stream');
   img.removeAttribute('src');
@@ -48,5 +146,8 @@ document.getElementById('btnStart').addEventListener('click', async ()=>{
 document.getElementById('btnStop').addEventListener('click', async ()=>{
   try { await stopPreview(); } catch(e){ alert('Stop failed: '+e.message); }
 });
+
+// Optional: if you want sensor data even when preview is not active, uncomment:
+// startSensorPolling();
 </script>
 {% endblock %}

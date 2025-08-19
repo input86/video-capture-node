@@ -156,7 +156,8 @@ def init_db():
             rotation INTEGER,
             clip_duration_s INTEGER,
             updated_at REAL,
-            profile TEXT
+            profile TEXT,
+            sensor_threshold_mm INTEGER
         );""")
         cur.execute("""
         CREATE TABLE IF NOT EXISTS camera_endpoints (
@@ -168,8 +169,9 @@ def init_db():
             updated_at REAL
         );""")
         db.commit()
-    # make sure 'profile' column exists (for older DBs)
+    # backfill columns for older DBs
     ensure_column("camera_settings", "profile", "TEXT")
+    ensure_column("camera_settings", "sensor_threshold_mm", "INTEGER")
 
 # -------------------- Misc helpers --------------------
 
@@ -672,11 +674,12 @@ def list_camera_ids() -> List[str]:
 
 def get_camera_settings(camera_id: str) -> Dict[str, Any]:
     ensure_column("camera_settings", "profile", "TEXT")
+    ensure_column("camera_settings", "sensor_threshold_mm", "INTEGER")
     with db_conn() as db:
         cur = db.cursor()
         cur.execute("""
             SELECT camera_id, resolution, fps, bitrate_kbps, rotation, clip_duration_s, updated_at,
-                   profile
+                   profile, sensor_threshold_mm
             FROM camera_settings WHERE camera_id = ?;
         """, (camera_id,))
         row = cur.fetchone()
@@ -690,11 +693,13 @@ def get_camera_settings(camera_id: str) -> Dict[str, Any]:
                 "bitrate_kbps": PROFILES[DEFAULT_PROFILE]["default_bitrate_kbps"],
                 "rotation": 0,
                 "clip_duration_s": 5,
+                "sensor_threshold_mm": 1000,
                 "updated_at": None
             }
         profile = row[7] if len(row) > 7 and row[7] else DEFAULT_PROFILE
         res = row[1] or _profile_to_res_fps(profile)[0]
         fps = int(row[2]) if row[2] is not None else _profile_to_res_fps(profile)[1]
+        sensor_thr = int(row[8]) if len(row) > 8 and row[8] is not None else 1000
         return {
             "camera_id": row[0],
             "profile": profile,
@@ -703,6 +708,7 @@ def get_camera_settings(camera_id: str) -> Dict[str, Any]:
             "bitrate_kbps": int(row[3]) if row[3] is not None else PROFILES[profile]["default_bitrate_kbps"],
             "rotation": int(row[4]) if row[4] is not None else 0,
             "clip_duration_s": int(row[5]) if row[5] is not None else 5,
+            "sensor_threshold_mm": sensor_thr,
             "updated_at": row[6],
         }
 
@@ -724,13 +730,23 @@ def upsert_camera_settings(payload: Dict[str, Any]) -> None:
     except Exception:
         dur = 5
     dur = max(2, min(600, dur))
+
+    # sensor threshold (optional; fall back to 1000)
+    try:
+        thr = payload.get("sensor_threshold_mm", 1000)
+        thr = int(thr if thr is not None else 1000)
+    except Exception:
+        thr = 1000
+    # clamp reasonable range for VL53L0X (approx)
+    thr = max(30, min(4000, thr))
+
     res, fps = _profile_to_res_fps(profile)
 
     with db_conn() as db:
         cur = db.cursor()
         cur.execute("""
-            INSERT INTO camera_settings (camera_id, resolution, fps, bitrate_kbps, rotation, clip_duration_s, updated_at, profile)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO camera_settings (camera_id, resolution, fps, bitrate_kbps, rotation, clip_duration_s, updated_at, profile, sensor_threshold_mm)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(camera_id) DO UPDATE SET
               resolution=excluded.resolution,
               fps=excluded.fps,
@@ -738,9 +754,10 @@ def upsert_camera_settings(payload: Dict[str, Any]) -> None:
               rotation=excluded.rotation,
               clip_duration_s=excluded.clip_duration_s,
               updated_at=excluded.updated_at,
-              profile=excluded.profile;
+              profile=excluded.profile,
+              sensor_threshold_mm=excluded.sensor_threshold_mm;
         """, (
-            cam_id, res, int(fps), int(br), int(rot), int(dur), now, profile
+            cam_id, res, int(fps), int(br), int(rot), int(dur), now, profile, int(thr)
         ))
         db.commit()
 
@@ -824,6 +841,10 @@ def read_node_recording_yaml(ep: Dict[str,str]) -> Tuple[Optional[Dict[str,Any]]
     rec = cfg.get("recording") or {}
     duration = rec.get("duration_s")
 
+    # NEW: sensor threshold (optional)
+    sensor_cfg = cfg.get("sensor") or {}
+    sensor_threshold_mm = sensor_cfg.get("threshold_mm", None)
+
     if not profile:
         res_legacy = str(rec.get("resolution","1920x1080"))
         fps_legacy = int(rec.get("framerate", rec.get("fps", 15)))
@@ -850,16 +871,29 @@ def read_node_recording_yaml(ep: Dict[str,str]) -> Tuple[Optional[Dict[str,Any]]
         duration = 5
     duration = max(2, min(600, duration))
 
+    # sanitize sensor threshold
+    try:
+        if sensor_threshold_mm is not None:
+            sensor_threshold_mm = int(sensor_threshold_mm)
+    except Exception:
+        sensor_threshold_mm = None
+    if sensor_threshold_mm is not None:
+        sensor_threshold_mm = max(30, min(4000, int(sensor_threshold_mm)))
+
     res, fps = _profile_to_res_fps(profile)
 
-    return {
+    out: Dict[str, Any] = {
         "profile": profile,
         "bitrate_kbps": bitrate,
         "rotation": rotation,
         "clip_duration_s": duration,
         "resolution": res,
         "fps": fps,
-    }, None
+    }
+    if sensor_threshold_mm is not None:
+        out["sensor_threshold_mm"] = sensor_threshold_mm
+
+    return out, None
 
 @app.route("/config/cameras")
 def config_cameras_page():
@@ -895,11 +929,14 @@ def cameras_save():
     if profile not in PROFILES:
         return jsonify({"ok": False, "error": "invalid profile"}), 400
 
+    # load current to preserve fields if omitted
+    current = get_camera_settings(cam_id)
+
     try:
         br_in = data.get("bitrate_kbps", None)
         br = _clamp_bitrate_for_profile(profile, None if br_in is None else int(br_in))
-        rot = int(data.get("rotation", 0))
-        dur = int(data.get("clip_duration_s", 5))
+        rot = int(data.get("rotation", current.get("rotation", 0)))
+        dur = int(data.get("clip_duration_s", current.get("clip_duration_s", 5)))
     except Exception:
         return jsonify({"ok": False, "error": "invalid numeric field(s)"}), 400
     if rot not in (0,90,180,270):
@@ -907,12 +944,22 @@ def cameras_save():
     if not (2 <= dur <= 600):
         return jsonify({"ok": False, "error": "clip_duration_s out of range (2-600)"}), 400
 
+    # NEW: sensor_threshold_mm (optional)
+    try:
+        thr_in = data.get("sensor_threshold_mm", current.get("sensor_threshold_mm", 1000))
+        thr = int(thr_in)
+    except Exception:
+        return jsonify({"ok": False, "error": "sensor_threshold_mm must be an integer"}), 400
+    if not (30 <= thr <= 4000):
+        return jsonify({"ok": False, "error": "sensor_threshold_mm out of range (30-4000)"}), 400
+
     upsert_camera_settings({
         "camera_id": cam_id,
         "profile": profile,
         "bitrate_kbps": br,
         "rotation": rot,
         "clip_duration_s": dur,
+        "sensor_threshold_mm": thr,
     })
     return jsonify({"ok": True}), 200
 
@@ -962,6 +1009,11 @@ def cameras_push_to_node():
     rec["framerate"] = int(fps)
     cfg["recording"] = rec
 
+    # NEW: push sensor threshold (preserve other sensor keys)
+    sensor_cfg = cfg.get("sensor") or {}
+    sensor_cfg["threshold_mm"] = int(cs.get("sensor_threshold_mm", 1000))
+    cfg["sensor"] = sensor_cfg
+
     new_text = yaml.safe_dump(cfg, sort_keys=False)
     ok, msg = _ssh_write_and_restart(user, host, cfg_path, new_text, svc)
     if not ok: return jsonify({"ok": False, "error": f"ssh write/restart failed: {msg.strip()}"}), 500
@@ -977,6 +1029,9 @@ def cameras_import_from_node():
     if not node_vals:
         return jsonify({"ok": False, "error": f"read node failed: {err or 'unknown'}"}), 500
     node_vals["camera_id"] = cam_id
+    # ensure we have a threshold value even if node omitted it
+    if "sensor_threshold_mm" not in node_vals:
+        node_vals["sensor_threshold_mm"] = get_camera_settings(cam_id).get("sensor_threshold_mm", 1000)
     upsert_camera_settings(node_vals)
     return jsonify({"ok": True, "settings": node_vals}), 200
 

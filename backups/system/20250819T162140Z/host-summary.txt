@@ -1,0 +1,22 @@
+UTC: 2025-08-19T16:21:40Z
+Host: hub-server-
+Kernel: Linux hub-server 6.12.25+rpt-rpi-v8 #1 SMP PREEMPT Debian 1:6.12.25-1+rpt1 (2025-04-30) aarch64 GNU/Linux
+OS: Debian GNU/Linux 12 (bookworm)
+GPU mem: gpu=76M
+Camera: supported=0 detected=0, libcamera interfaces=0
+
+User/groups (pi): pi adm dialout cdrom sudo audio video plugdev games users input render netdev spi i2c gpio lpadmin
+
+Interfaces:
+lo               UNKNOWN        127.0.0.1/8 ::1/128 
+eth0             DOWN           
+wlan0            UP             192.168.0.38/24 192.168.0.150/24 fd9f:5182:4a7d:b691:fa64:8d76:53b2:55c4/64 fd9f:5182:4a7d:b691:3467:b274:a8a4:6fd/64 fe80::9f0d:15c:2c43:b448/64 fe80::b6a:4831:124:510e/64 
+
+Routes:
+default via 192.168.0.1 dev wlan0 proto dhcp src 192.168.0.38 metric 600 
+default via 192.168.0.1 dev wlan0 src 192.168.0.150 metric 3003 
+192.168.0.0/24 dev wlan0 proto kernel scope link src 192.168.0.38 metric 600 
+192.168.0.0/24 dev wlan0 proto dhcp scope link src 192.168.0.150 metric 3003 
+
+WiFi networks (recent):
+highlight
