@@ -1,0 +1,31 @@
+### systemctl status hub-api
+● hub-api.service - Hub API Service
+     Loaded: loaded (/etc/systemd/system/hub-api.service; enabled; preset: enabled)
+     Active: active (running) since Tue 2025-08-19 12:56:38 EDT; 1h 22min ago
+   Main PID: 5510 (gunicorn)
+      Tasks: 4 (limit: 4458)
+        CPU: 4.921s
+     CGroup: /system.slice/hub-api.service
+             ├─5510 /home/pi/hub_server/venv/bin/python /home/pi/hub_server/venv/bin/gunicorn --workers 3 --bind 0.0.0.0:5000 server:app
+             ├─5512 /home/pi/hub_server/venv/bin/python /home/pi/hub_server/venv/bin/gunicorn --workers 3 --bind 0.0.0.0:5000 server:app
+             ├─5513 /home/pi/hub_server/venv/bin/python /home/pi/hub_server/venv/bin/gunicorn --workers 3 --bind 0.0.0.0:5000 server:app
+             └─5514 /home/pi/hub_server/venv/bin/python /home/pi/hub_server/venv/bin/gunicorn --workers 3 --bind 0.0.0.0:5000 server:app
+
+Aug 19 12:56:38 hub-server systemd[1]: Started hub-api.service - Hub API Service.
+Aug 19 12:56:38 hub-server gunicorn[5510]: [2025-08-19 12:56:38 -0400] [5510] [INFO] Starting gunicorn 23.0.0
+Aug 19 12:56:38 hub-server gunicorn[5510]: [2025-08-19 12:56:38 -0400] [5510] [INFO] Listening at: http://0.0.0.0:5000 (5510)
+Aug 19 12:56:38 hub-server gunicorn[5510]: [2025-08-19 12:56:38 -0400] [5510] [INFO] Using worker: sync
+Aug 19 12:56:38 hub-server gunicorn[5512]: [2025-08-19 12:56:38 -0400] [5512] [INFO] Booting worker with pid: 5512
+Aug 19 12:56:38 hub-server gunicorn[5513]: [2025-08-19 12:56:38 -0400] [5513] [INFO] Booting worker with pid: 5513
+Aug 19 12:56:38 hub-server gunicorn[5514]: [2025-08-19 12:56:38 -0400] [5514] [INFO] Booting worker with pid: 5514
+
+### is-enabled hub-api
+enabled
+
+### show hub-api (selected)
+ExecStart={ path=/home/pi/hub_server/venv/bin/gunicorn ; argv[]=/home/pi/hub_server/venv/bin/gunicorn --workers 3 --bind 0.0.0.0:5000 server:app ; ignore_errors=no ; start_time=[Tue 2025-08-19 12:56:38 EDT] ; stop_time=[n/a] ; pid=5510 ; code=(null) ; status=0/0 }
+Id=hub-api.service
+Description=Hub API Service
+ActiveState=active
+SubState=running
+FragmentPath=/etc/systemd/system/hub-api.service
