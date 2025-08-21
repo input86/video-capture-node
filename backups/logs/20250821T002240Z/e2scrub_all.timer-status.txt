@@ -1,0 +1,18 @@
+### systemctl status e2scrub_all.timer
+● e2scrub_all.timer - Periodic ext4 Online Metadata Check for All Filesystems
+     Loaded: loaded (/lib/systemd/system/e2scrub_all.timer; enabled; preset: enabled)
+     Active: active (waiting) since Tue 2025-08-19 22:52:20 EDT; 21h ago
+    Trigger: Sun 2025-08-24 03:10:54 EDT; 3 days left
+   Triggers: ● e2scrub_all.service
+
+Aug 19 22:52:20 hub-server systemd[1]: Started e2scrub_all.timer - Periodic ext4 Online Metadata Check for All Filesystems.
+
+### is-enabled e2scrub_all.timer
+enabled
+
+### show e2scrub_all.timer (selected)
+Id=e2scrub_all.timer
+Description=Periodic ext4 Online Metadata Check for All Filesystems
+ActiveState=active
+SubState=waiting
+FragmentPath=/lib/systemd/system/e2scrub_all.timer

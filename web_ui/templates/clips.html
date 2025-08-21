@@ -3,10 +3,76 @@
 {% block content %}
 <h1 class="mb-3">Clips</h1>
 
-<div class="mb-3 d-flex gap-2">
+<!-- Controls -->
+<div class="mb-3 d-flex flex-wrap gap-2">
   <button id="btnThumbs" class="btn btn-outline-primary">Build / Prune Thumbnails</button>
+  <span class="align-self-center text-muted small" id="resultCount">
+    {% if result_count is defined %}Showing {{ result_count }} clip{{ '' if result_count == 1 else 's' }}{% endif %}
+  </span>
 </div>
 
+<!-- Filter bar (P1C) -->
+<div class="card mb-3" id="filtersCard"
+     data-filter-all="{{ '1' if filter_all else '0' }}"
+     data-filter-start="{{ filter_start if filter_start is not none else '' }}"
+     data-filter-end="{{ filter_end if filter_end is not none else '' }}"
+     data-sort="{{ sort or 'newest' }}">
+  <div class="card-body">
+    <div class="row g-3 align-items-end">
+      <div class="col-12 col-md-4">
+        <label class="form-label">Start</label>
+        <input type="datetime-local" id="fStart" class="form-control">
+      </div>
+      <div class="col-12 col-md-4">
+        <label class="form-label">End</label>
+        <input type="datetime-local" id="fEnd" class="form-control">
+      </div>
+      <div class="col-12 col-md-2">
+        <label class="form-label">Sort</label>
+        <select id="fSort" class="form-select">
+          <option value="newest">Newest first</option>
+          <option value="oldest">Oldest first</option>
+        </select>
+      </div>
+      <div class="col-12 col-md-2 d-grid">
+        <button id="btnApply" class="btn btn-primary">Apply</button>
+      </div>
+    </div>
+
+    <div class="mt-3 d-flex flex-wrap gap-2">
+      <span class="me-2 text-muted small">Quick ranges:</span>
+      <button class="btn btn-sm btn-outline-secondary qr" data-min="30">Last 30 min</button>
+      <button class="btn btn-sm btn-outline-secondary qr" data-min="45">Last 45 min</button>
+      <button class="btn btn-sm btn-outline-secondary qr" data-min="60">Last 60 min</button>
+      <button class="btn btn-sm btn-outline-secondary qr" data-min="90">Last 90 min</button>
+      <button class="btn btn-sm btn-outline-secondary" id="qrAll">All time</button>
+      <button class="btn btn-sm btn-outline-secondary" id="btnReset">Reset</button>
+    </div>
+
+    <div class="mt-2 text-muted small">Times are shown in your local timezone. Filters are validated in UTC.</div>
+  </div>
+</div>
+
+<!-- Session panel (P1D) -->
+<div class="card mb-3" id="sessionCard">
+  <div class="card-body">
+    <div class="d-flex justify-content-between flex-wrap gap-2">
+      <div>
+        <div class="fw-semibold mb-1">Session</div>
+        <div id="sessionStatus" class="text-muted small">No active session.</div>
+      </div>
+      <div class="d-flex gap-2">
+        <button id="btnSessionStart" class="btn btn-outline-success btn-sm">Start Session</button>
+        <button id="btnSessionStop" class="btn btn-outline-warning btn-sm">Stop Session</button>
+        <button id="btnSessionCustomEnd" class="btn btn-outline-secondary btn-sm">Set Custom End…</button>
+        <button id="btnSessionView" class="btn btn-primary btn-sm">View Session Clips</button>
+        <button id="btnSessionClear" class="btn btn-outline-danger btn-sm">Clear Session</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Results -->
 <div class="card">
   <div class="card-body p-0">
     <div class="table-responsive">
@@ -44,6 +110,67 @@
 </div>
 
 <script>
+/* ---------- helpers ---------- */
+function toLocalInputValue(date) {
+  // datetime-local expects "YYYY-MM-DDTHH:MM"
+  const pad = n => String(n).padStart(2,'0');
+  const y = date.getFullYear();
+  const m = pad(date.getMonth()+1);
+  const d = pad(date.getDate());
+  const h = pad(date.getHours());
+  const i = pad(date.getMinutes());
+  return `${y}-${m}-${d}T${h}:${i}`;
+}
+
+// FIX: Correct UTC conversion — no manual offset adjustment
+function fromInputToUTC(value) {
+  // treat input as local time, return ISO UTC (Z)
+  if (!value) return null;
+  const dt = new Date(value);            // parsed as LOCAL time
+  if (isNaN(dt.getTime())) return null;
+  return dt.toISOString().replace(/\.\d{3}Z$/,'Z'); // correct UTC
+}
+
+function minutesAgoLocalInputs(mins) {
+  const now = new Date();
+  const start = new Date(now.getTime() - mins*60000);
+  return {startLocal: toLocalInputValue(start), endLocal: toLocalInputValue(now)};
+}
+function getQS() {
+  const p = new URLSearchParams(location.search);
+  // Allow repeated params, but we only use start/end/sort here
+  return Object.fromEntries(p.entries());
+}
+function setQS(params) {
+  const p = new URLSearchParams(params);
+  location.href = `/clips?${p.toString()}`;
+}
+function saveFiltersToLS(obj) {
+  try { localStorage.setItem('clips.filters', JSON.stringify(obj)); } catch(e){}
+}
+function loadFiltersFromLS() {
+  try {
+    const v = localStorage.getItem('clips.filters');
+    return v ? JSON.parse(v) : null;
+  } catch(e){ return null; }
+}
+function saveSession(obj) {
+  try { localStorage.setItem('session', JSON.stringify(obj)); } catch(e){}
+}
+function loadSession() {
+  try {
+    const v = localStorage.getItem('session');
+    return v ? JSON.parse(v) : null;
+  } catch(e){ return null; }
+}
+function fmtLocal(dtISO) {
+  if (!dtISO) return '';
+  const d = new Date(dtISO);
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleString();
+}
+
+/* ---------- thumbnails / delete ---------- */
 async function postJSON(url, body){
   const r = await fetch(url, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body||{})});
   const d = await r.json().catch(()=> ({}));
@@ -69,5 +196,179 @@ for(const btn of document.querySelectorAll('.btn-del')){
     }catch(e){ alert('Delete failed: '+e.message); }
   });
 }
+
+/* ---------- P1C: Filters ---------- */
+(function(){
+  const card = document.getElementById('filtersCard');
+  const fStart = document.getElementById('fStart');
+  const fEnd   = document.getElementById('fEnd');
+  const fSort  = document.getElementById('fSort');
+  const btnApply = document.getElementById('btnApply');
+  const btnReset = document.getElementById('btnReset');
+  const btnAll   = document.getElementById('qrAll');
+  const qrBtns   = document.querySelectorAll('.qr');
+
+  const serverAll  = card.dataset.filterAll === '1';
+  const serverStart = card.dataset.filterStart ? Number(card.dataset.filterStart) : null;
+  const serverEnd   = card.dataset.filterEnd ? Number(card.dataset.filterEnd) : null;
+  const serverSort  = card.dataset.sort || 'newest';
+
+  // Prefill from URL > localStorage > defaults (Last 60 min)
+  const qs = getQS();
+  let ls = loadFiltersFromLS();
+
+  function applyLocalInputsFrom(source) {
+    if (source.all === true) {
+      fStart.value = ''; fEnd.value = '';
+    } else if (source.startISO && source.endISO) {
+      fStart.value = toLocalInputValue(new Date(source.startISO));
+      fEnd.value   = toLocalInputValue(new Date(source.endISO));
+    } else if (source.startLocal && source.endLocal) {
+      fStart.value = source.startLocal; fEnd.value = source.endLocal;
+    }
+    fSort.value = source.sort || 'newest';
+  }
+
+  let initial = null;
+  if ('start' in qs || 'end' in qs || 'all' in qs) {
+    if (String(qs.all || '').toLowerCase() === '1') {
+      initial = { all: true, sort: (qs.sort || 'newest') };
+    } else if (qs.start && qs.end) {
+      initial = { startISO: qs.start, endISO: qs.end, sort: (qs.sort || 'newest') };
+    }
+  } else if (serverAll) {
+    initial = { all: true, sort: serverSort };
+  } else if (serverStart && serverEnd) {
+    initial = { startISO: new Date(serverStart*1000).toISOString(), endISO: new Date(serverEnd*1000).toISOString(), sort: serverSort };
+  } else if (ls) {
+    initial = ls;
+  }
+  // fallback default: last 60 minutes
+  if (!initial) {
+    const r = minutesAgoLocalInputs(60);
+    initial = { startLocal: r.startLocal, endLocal: r.endLocal, sort: 'newest' };
+  }
+  applyLocalInputsFrom(initial);
+
+  // Quick ranges
+  qrBtns.forEach(b=>{
+    b.addEventListener('click', ()=>{
+      const mins = parseInt(b.dataset.min, 10);
+      const r = minutesAgoLocalInputs(mins);
+      fStart.value = r.startLocal;
+      fEnd.value = r.endLocal;
+      fSort.value = 'newest';
+    });
+  });
+  // All-time clears inputs
+  btnAll.addEventListener('click', ()=>{
+    fStart.value = '';
+    fEnd.value = '';
+    fSort.value = 'newest';
+  });
+  // Reset => default 60 min
+  btnReset.addEventListener('click', ()=>{
+    const r = minutesAgoLocalInputs(60);
+    fStart.value = r.startLocal;
+    fEnd.value = r.endLocal;
+    fSort.value = 'newest';
+  });
+
+  // Apply: build query
+  btnApply.addEventListener('click', ()=>{
+    const startISO = fromInputToUTC(fStart.value);
+    const endISO   = fromInputToUTC(fEnd.value);
+    const sort = fSort.value || 'newest';
+
+    if (!fStart.value && !fEnd.value) {
+      // All time
+      saveFiltersToLS({ all: true, sort });
+      setQS({ all:'1', sort });
+      return;
+    }
+    if (!startISO || !endISO) {
+      alert('Please provide both Start and End, or choose All time.');
+      return;
+    }
+    if (new Date(startISO) > new Date(endISO)) {
+      alert('Start must be before End.');
+      return;
+    }
+    saveFiltersToLS({ startISO, endISO, sort });
+    setQS({ start: startISO, end: endISO, sort });
+  });
+})();
+
+/* ---------- P1D: Session panel ---------- */
+(function(){
+  const elStatus = document.getElementById('sessionStatus');
+  const btnStart = document.getElementById('btnSessionStart');
+  const btnStop  = document.getElementById('btnSessionStop');
+  const btnCEnd  = document.getElementById('btnSessionCustomEnd');
+  const btnView  = document.getElementById('btnSessionView');
+  const btnClear = document.getElementById('btnSessionClear');
+
+  function refreshUI() {
+    const s = loadSession();
+    if (!s || !s.startISO) {
+      elStatus.textContent = 'No active session.';
+      return;
+    }
+    if (!s.endISO) {
+      elStatus.textContent = `Session started: ${fmtLocal(s.startISO)}`;
+    } else {
+      elStatus.textContent = `Session: ${fmtLocal(s.startISO)} → ${fmtLocal(s.endISO)}`;
+    }
+  }
+
+  btnStart.addEventListener('click', ()=>{
+    const nowISO = new Date().toISOString();
+    saveSession({ startISO: nowISO, endISO: null });
+    refreshUI();
+  });
+
+  btnStop.addEventListener('click', ()=>{
+    const s = loadSession() || {};
+    if (!s.startISO) {
+      alert('No active session to stop.');
+      return;
+    }
+    s.endISO = new Date().toISOString();
+    saveSession(s);
+    refreshUI();
+  });
+
+  btnCEnd.addEventListener('click', ()=>{
+    const pick = prompt('Set custom end time (local) as YYYY-MM-DDTHH:MM');
+    if (!pick) return;
+    const iso = fromInputToUTC(pick);   // FIX: reuse correct conversion
+    if (!iso) { alert('Invalid datetime format.'); return; }
+    const s = loadSession() || {};
+    if (!s.startISO) { alert('Start a session first.'); return; }
+    s.endISO = iso;
+    saveSession(s);
+    refreshUI();
+  });
+
+  btnView.addEventListener('click', ()=>{
+    const s = loadSession();
+    if (!s || !s.startISO) { alert('No session found. Start a session first.'); return; }
+    let endISO = s.endISO;
+    if (!endISO) {
+      if (!confirm('End time not set. Use current time as end?')) return;
+      endISO = new Date().toISOString();
+      s.endISO = endISO; saveSession(s);
+    }
+    const p = new URLSearchParams({ start: s.startISO, end: endISO, sort: 'newest' });
+    location.href = `/clips?${p.toString()}`;
+  });
+
+  btnClear.addEventListener('click', ()=>{
+    saveSession({});
+    refreshUI();
+  });
+
+  refreshUI();
+})();
 </script>
 {% endblock %}

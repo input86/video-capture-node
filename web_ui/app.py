@@ -12,7 +12,7 @@ import urllib.error
 import socket
 import time
 import shutil
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -296,6 +296,50 @@ def list_recent_clips(limit: int = 200) -> List[Dict[str, Any]]:
         print("list_recent_clips error:", e)
     return items
 
+# >>>>>>>>>>>>>>> NEW: filtered clips helper (P1C) <<<<<<<<<<<<<<<
+def list_clips_filtered(
+    start_ts: Optional[float],
+    end_ts: Optional[float],
+    *,
+    all_time: bool = False,
+    sort: str = "newest",
+    limit: Optional[int] = 200,
+) -> List[Dict[str, Any]]:
+    """
+    Filesystem-based filter using file mtime.
+    - If all_time is True, start/end are ignored.
+    - sort: 'newest' (desc) or 'oldest' (asc)
+    - limit: max items to return (None => no cap)
+    """
+    items: List[Dict[str, Any]] = []
+    try:
+        if not CLIPS_DIR.exists():
+            return items
+        paths = list(CLIPS_DIR.glob("**/*.mp4"))
+        # sort by mtime first (so we can early-stop if needed)
+        reverse = (sort != "oldest")
+        paths.sort(key=lambda p: p.stat().st_mtime, reverse=reverse)
+        for p in paths:
+            st = p.stat()
+            mt = st.st_mtime
+            if not all_time:
+                if start_ts is not None and mt < start_ts:
+                    # if ascending and mt < start, continue; if descending and mt < start still ok but we filter
+                    pass
+                if end_ts is not None and mt > end_ts:
+                    # same logic for end bound
+                    pass
+                # simple inclusive window check
+                if (start_ts is not None and mt < start_ts) or (end_ts is not None and mt > end_ts):
+                    continue
+            items.append({"rel": str(p.relative_to(CLIPS_DIR)), "size": st.st_size, "mtime": mt})
+            if limit is not None and len(items) >= limit:
+                break
+    except Exception as e:
+        print("list_clips_filtered error:", e)
+    return items
+# <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+
 # -------------------- Redacted config helpers --------------------
 
 REDACT_KEYS = ("token","secret","password","passwd","key")
@@ -493,9 +537,39 @@ def nodes_csv():
 
 @app.route("/clips")
 def clips_page():
-    clips = list_recent_clips(limit=200)
-    return render_template("clips.html", clips=clips,
-                           clip_base=str(CLIPS_DIR), limit=200, title="Clips")
+    # ----- NEW: server-side filtering (P1C) -----
+    qs = request.args
+    all_time = str(qs.get("all", "")).lower() in ("1", "true", "yes")
+    sort = qs.get("sort", "newest")
+    start_param = qs.get("start")
+    end_param = qs.get("end")
+
+    start_ts = parse_any_ts(start_param) if start_param else None
+    end_ts = parse_any_ts(end_param) if end_param else None
+
+    # Default to last 60 minutes unless "all time" requested
+    if not all_time:
+        if start_ts is None or end_ts is None:
+            now_ts = datetime.now(timezone.utc).timestamp()
+            end_ts = now_ts
+            start_ts = now_ts - 60 * 60
+
+    # If all-time, do not limit; else keep existing page cap (200)
+    limit = None if all_time else 200
+    clips = list_clips_filtered(start_ts, end_ts, all_time=all_time, sort=sort, limit=limit)
+
+    # Pass filter info to template so JS can prefill UI
+    return render_template(
+        "clips.html",
+        clips=clips,
+        clip_base=str(CLIPS_DIR),
+        title="Clips",
+        filter_all=all_time,
+        filter_start=start_ts,
+        filter_end=end_ts,
+        sort=sort,
+        result_count=len(clips),
+    )
 
 @app.route("/download/<path:relpath>")
 def download_clip(relpath: str):

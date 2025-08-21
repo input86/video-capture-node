@@ -1,0 +1,32 @@
+Manifest UTC: 2025-08-21T00:22:40Z
+Host: hub-server
+Kernel: Linux hub-server 6.12.25+rpt-rpi-v8 #1 SMP PREEMPT Debian 1:6.12.25-1+rpt1 (2025-04-30) aarch64 GNU/Linux
+Data dir: /home/pi/data
+DB path:  /home/pi/data/hub.db
+
+Hub services (explicit+auto):
+  hub-api                      active
+  hub-heartbeat                active
+  tft-ui                       active
+  hub-web-admin                active
+  hub-web-thumbs               inactive
+
+WebUI services (explicit+auto):
+  hub-web-admin                active
+  hub-web-thumbs               inactive
+  hub-web-thumbs.timer         active
+  apt-daily-upgrade.timer      active
+  apt-daily.timer              active
+  dpkg-db-backup.timer         active
+  e2scrub_all.timer            active
+  fstrim.timer                 active
+  logrotate.timer              active
+  man-db.timer                 active
+  systemd-tmpfiles-clean.timer active
+
+Nginx site available: /etc/nginx/sites-available/hub_web_admin
+Nginx site enabled:   /etc/nginx/sites-enabled/hub_web_admin
+Basic auth file:      /etc/nginx/.htpasswd (copied? no)
+WebUI env file:       /etc/default/hub-web-admin (copied? no)
+
+Label: Sessions and Filters Page implemented
