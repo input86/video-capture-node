@@ -73,6 +73,8 @@
           <button class="btn btn-sm btn-secondary btn-save-endpoint" data-cam="{{ cam_id }}">Save Endpoint</button>
           <button class="btn btn-sm btn-outline-success btn-push" data-cam="{{ cam_id }}">Push to Node & Restart</button>
           <button class="btn btn-sm btn-outline-info btn-import" data-cam="{{ cam_id }}">Import From Node</button>
+          <!-- NEW: Power Off -->
+          <button class="btn btn-sm btn-outline-danger btn-poweroff" data-cam="{{ cam_id }}">Power Off</button>
           <span class="ms-auto small text-muted">Last updated: {{ cam.updated_at and cam.updated_at|date_fmt or "—" }}</span>
         </div>
 
@@ -303,9 +305,9 @@ document.addEventListener('input', (ev)=>{
   }
 });
 
-// Delegate button clicks (unchanged actions except Save payload gains sensor_threshold_mm)
+// Delegate button clicks (added .btn-poweroff)
 document.addEventListener('click', async (ev) => {
-  const btn = ev.target.closest('.btn-save, .btn-save-endpoint, .btn-push, .btn-import');
+  const btn = ev.target.closest('.btn-save, .btn-save-endpoint, .btn-push, .btn-import, .btn-poweroff');
   if(!btn) return;
 
   const cam = btn.dataset.cam;
@@ -350,6 +352,12 @@ document.addEventListener('click', async (ev) => {
     else if (btn.classList.contains('btn-import')) {
       await postJSON('/action/secure/cameras/import_from_node', {camera_id: cam});
       location.reload();
+    }
+
+    else if (btn.classList.contains('btn-poweroff')) {
+      if(!confirm(`Power off ${cam}? This will safely shut down the node.`)) return;
+      await postJSON('/action/secure/node/poweroff', {camera_id: cam});
+      alert(`${cam} poweroff requested. It will go offline shortly.`);
     }
 
   } catch(e) {

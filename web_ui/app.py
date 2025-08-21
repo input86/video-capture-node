@@ -1190,6 +1190,38 @@ def node_restart():
     state = (p.stdout or p.stderr).strip()
     return jsonify({"ok": True, "state": state}), 200
 
+@app.route("/action/secure/node/poweroff", methods=["POST"])
+def node_poweroff():
+    """
+    Power off a camera node via SSH.
+    Runs shutdown in the background so SSH can exit 0 immediately.
+    """
+    data = request.get_json(silent=True) or {}
+    cam = (data.get("camera_id") or "").strip()
+    if not cam:
+        return jsonify({"ok": False, "error": "camera_id required"}), 400
+
+    ep = get_camera_endpoint(cam)
+    host = ep.get("ssh_host") or ""
+    user = ep.get("ssh_user") or "pi"
+    if not host:
+        return jsonify({"ok": False, "error": "ssh_host not set"}), 400
+
+    # Background the shutdown so the SSH session doesn't die mid-command.
+    # Try the common shutdown path first, then a poweroff fallback.
+    bg_shutdown = "nohup sudo /sbin/shutdown -h now </dev/null >/dev/null 2>&1 &"
+    p = _ssh(["ssh", f"{user}@{host}", bg_shutdown])
+    if p.returncode != 0:
+        # Fallback: some distros link only 'poweroff'
+        bg_poweroff = "nohup sudo poweroff </dev/null >/dev/null 2>&1 &"
+        p2 = _ssh(["ssh", f"{user}@{host}", bg_poweroff])
+        if p2.returncode != 0:
+            err = ((p.stderr or "") + "\n" + (p2.stderr or "")).strip()
+            return jsonify({"ok": False, "error": err or "poweroff failed"}), 500
+
+    return jsonify({"ok": True, "message": f"{cam} poweroff requested"}), 200
+
+
 @app.route("/action/secure/node/logs", methods=["POST"])
 def node_logs():
     data = request.get_json(silent=True) or {}
