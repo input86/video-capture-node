@@ -1,0 +1,18 @@
+### systemctl status apt-daily.timer
+● apt-daily.timer - Daily apt download activities
+     Loaded: loaded (/lib/systemd/system/apt-daily.timer; enabled; preset: enabled)
+     Active: active (waiting) since Tue 2025-08-19 22:52:20 EDT; 24h ago
+    Trigger: Thu 2025-08-21 09:18:49 EDT; 9h left
+   Triggers: ● apt-daily.service
+
+Aug 19 22:52:20 hub-server systemd[1]: Started apt-daily.timer - Daily apt download activities.
+
+### is-enabled apt-daily.timer
+enabled
+
+### show apt-daily.timer (selected)
+Id=apt-daily.timer
+Description=Daily apt download activities
+ActiveState=active
+SubState=waiting
+FragmentPath=/lib/systemd/system/apt-daily.timer

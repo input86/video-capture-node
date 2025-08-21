@@ -1,0 +1,19 @@
+### systemctl status man-db.timer
+● man-db.timer - Daily man-db regeneration
+     Loaded: loaded (/lib/systemd/system/man-db.timer; enabled; preset: enabled)
+     Active: active (waiting) since Tue 2025-08-19 22:52:20 EDT; 24h ago
+    Trigger: Thu 2025-08-21 01:41:48 EDT; 1h 53min left
+   Triggers: ● man-db.service
+       Docs: man:mandb(8)
+
+Aug 19 22:52:20 hub-server systemd[1]: Started man-db.timer - Daily man-db regeneration.
+
+### is-enabled man-db.timer
+enabled
+
+### show man-db.timer (selected)
+Id=man-db.timer
+Description=Daily man-db regeneration
+ActiveState=active
+SubState=waiting
+FragmentPath=/lib/systemd/system/man-db.timer

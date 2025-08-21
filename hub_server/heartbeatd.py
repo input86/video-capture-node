@@ -105,14 +105,40 @@ def upsert_node(node_id: str, fields: Dict[str, Any]):
     pk = pk_col()
     with db() as con:
         con.execute(f"INSERT OR IGNORE INTO nodes ({pk}) VALUES (?);", (node_id,))
-        sets = ", ".join([f"{k}=?" for k in fields.keys()])
-        vals = list(fields.values()) + [node_id]
-        con.execute(f"UPDATE nodes SET {sets} WHERE {pk}=?;", vals)
+        if fields:
+            sets = ", ".join([f"{k}=?" for k in fields.keys()])
+            vals = list(fields.values()) + [node_id]
+            con.execute(f"UPDATE nodes SET {sets} WHERE {pk}=?;", vals)
         con.commit()
 
 def auth_ok(node_id: str, token: str) -> bool:
     expected = NODE_TOKENS.get(node_id)
     return (expected is not None) and (token == expected)
+
+# ----------- coercion helpers (NEW) -----------
+
+def to_str(x) -> Optional[str]:
+    if x is None: return None
+    try:
+        s = str(x).strip()
+        return s if s != "" else None
+    except Exception:
+        return None
+
+def to_float(x) -> Optional[float]:
+    if x is None: return None
+    try:
+        return float(x)
+    except Exception:
+        return None
+
+def to_int(x) -> Optional[int]:
+    if x is None: return None
+    try:
+        # handle cases like "0", "12", 12.0
+        return int(float(x))
+    except Exception:
+        return None
 
 # ------------------ routes ------------------
 
@@ -130,18 +156,25 @@ def heartbeat():
     if not auth_ok(node_id, token):
         return jsonify({"error": "unauthorized"}), 401
 
-    ip        = request.headers.get("X-Forwarded-For") or request.remote_addr
-    version   = (payload or {}).get("version")
-    free_pct  = (payload or {}).get("free_space_pct")
-    queue_len = (payload or {}).get("queue_len")
+    # Gather + coerce
+    ip_hdr    = request.headers.get("X-Forwarded-For")
+    ip        = to_str(ip_hdr) or to_str(request.remote_addr)
+    version   = to_str((payload or {}).get("version"))
+    free_pct  = to_float((payload or {}).get("free_space_pct"))
+    queue_len = to_int((payload or {}).get("queue_len"))
 
-    upsert_node(node_id, {
-        "last_seen": utcnow_iso(),
-        "ip": ip,
-        "version": version,
-        "free_space_pct": free_pct,
-        "queue_len": queue_len
-    })
+    # Only update fields we actually have (won't overwrite prior non-null with NULL)
+    fields: Dict[str, Any] = {"last_seen": utcnow_iso()}
+    if ip is not None:
+        fields["ip"] = ip
+    if version is not None:
+        fields["version"] = version
+    if free_pct is not None:
+        fields["free_space_pct"] = free_pct
+    if queue_len is not None:
+        fields["queue_len"] = queue_len
+
+    upsert_node(node_id, fields)
     return jsonify({"ok": True, "server_time": utcnow_iso()})
 
 @app.get("/api/v1/nodes")
@@ -167,7 +200,6 @@ e.innerHTML=`<div><b>${n.node_id||n.id}</b> <span class="chip ${(n.status||'offl
 g.appendChild(e);}); document.getElementById('t').textContent='Updated '+new Date().toLocaleTimeString();}
 load(); setInterval(load,3000);
 </script>"""
-from flask import Response
 @app.get("/ui")
 def ui():
     return Response(_UI, mimetype="text/html")

@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 import shutil
 import os
 import re
+import json
+import urllib.request
 from typing import Optional, Dict, List, Tuple, Set
 
 # -------- Config --------
@@ -19,7 +21,10 @@ STORAGE_BASE = cfg.get("storage", {}).get("base_dir", "/home/pi")
 CLIPS_BASE = os.path.join(STORAGE_BASE, "clips")
 MIN_FREE_PCT = float(cfg.get("storage", {}).get("min_free_percent", 10))
 
-# Heartbeat thresholds (seconds)
+# Hub Web API (Flask) — same host, per app.py default
+HUB_API = "http://127.0.0.1:8080"
+
+# Heartbeat thresholds (fallback only; API provides truth)
 HEARTBEAT_ONLINE_SEC = 10
 HEARTBEAT_STALE_SEC = 30
 
@@ -47,7 +52,6 @@ def build_nodes_select() -> Tuple[str, List[str]]:
     elif "id" in cols:
         id_expr = "id AS node_id"
     else:
-        # No usable id column—return a query that yields zero rows but correct shape
         sql = ("SELECT NULL AS node_id, NULL AS last_seen, NULL AS ip, NULL AS version, "
                "NULL AS free_space_pct, NULL AS queue_len, NULL AS legacy_status WHERE 0")
         return sql, ["node_id","last_seen","ip","version","free_space_pct","queue_len","legacy_status"]
@@ -74,7 +78,7 @@ def build_nodes_select() -> Tuple[str, List[str]]:
 
     return sql, ["node_id","last_seen","ip","version","free_space_pct","queue_len","legacy_status"]
 
-def fetch_nodes() -> List[Dict]:
+def fetch_nodes_from_db() -> List[Dict]:
     sql, out_cols = build_nodes_select()
     with db_conn() as db:
         cur = db.cursor()
@@ -91,7 +95,35 @@ def free_pct() -> float:
     total, used, free = shutil.disk_usage(STORAGE_BASE)
     return (free / total * 100.0) if total else 0.0
 
-# -------- Status helpers --------
+# -------- API helpers --------
+def fetch_api_nodes() -> Optional[Dict[str, Dict]]:
+    """
+    Returns: { node_id: {status, seconds_ago, last_heartbeat_iso, last_heartbeat, skew_ahead}, ... }
+    or None on failure.
+    """
+    url = f"{HUB_API}/api/nodes"
+    try:
+        with urllib.request.urlopen(url, timeout=4) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        if not data or not data.get("ok"):
+            return None
+        out = {}
+        for n in data.get("nodes", []):
+            nid = n.get("node_id")
+            if not nid:
+                continue
+            out[str(nid)] = {
+                "status": n.get("status", "offline"),
+                "seconds_ago": n.get("seconds_ago"),
+                "last_heartbeat": n.get("last_heartbeat"),
+                "last_heartbeat_iso": n.get("last_heartbeat_iso"),
+                "skew_ahead": n.get("skew_ahead", 0),
+            }
+        return out
+    except Exception:
+        return None
+
+# -------- Fallback status helpers (if API unavailable) --------
 def parse_iso(iso_str: Optional[str]) -> Optional[datetime]:
     if not iso_str:
         return None
@@ -111,7 +143,7 @@ def parse_iso(iso_str: Optional[str]) -> Optional[datetime]:
     except Exception:
         return None
 
-def computed_status(last_seen_iso: Optional[str]) -> str:
+def computed_status_fallback(last_seen_iso: Optional[str]) -> str:
     dt = parse_iso(last_seen_iso)
     if not dt:
         return "offline"
@@ -133,10 +165,6 @@ def status_color(status: str) -> str:
 FN_TS_RE = re.compile(r".*?(\d{8}T\d{6})Z", re.I)
 
 def ts_from_filename(fn: str) -> Optional[str]:
-    """
-    Extract ISO timestamp (UTC Z) from filename like ..._20250809T024522Z.mp4
-    Returns ISO "YYYY-MM-DDTHH:MM:SSZ" or None.
-    """
     m = FN_TS_RE.match(fn)
     if not m:
         return None
@@ -147,12 +175,7 @@ def ts_from_filename(fn: str) -> Optional[str]:
     except Exception:
         return None
 
-def load_existing_paths() -> Tuple[str, Set[str]]:
-    """
-    Returns (mode, existing_paths)
-    mode is 'legacy' if table has 'filepath', else 'new' if it has 'rel_path'
-    existing_paths contains normalized keys for quick duplicate checks.
-    """
+def load_existing_paths() -> Tuple[str, Set[str]]:# noqa
     cols = set(table_cols("clips"))
     if "filepath" in cols:
         with db_conn() as db:
@@ -168,7 +191,6 @@ def load_existing_paths() -> Tuple[str, Set[str]]:
         return "unknown", set()
 
 def prune_db():
-    """Remove rows from clips whose file is missing on disk."""
     removed = 0
     cols = set(table_cols("clips"))
     path_col = "filepath" if "filepath" in cols else ("rel_path" if "rel_path" in cols else None)
@@ -189,10 +211,6 @@ def prune_db():
     toast(f"Pruned {removed} records", "lime")
 
 def reindex_db():
-    """
-    Walk CLIPS_BASE and insert any missing files into clips.
-    Works with legacy and new schema.
-    """
     if not os.path.isdir(CLIPS_BASE):
         toast("No clips directory found", "orange")
         return
@@ -216,16 +234,14 @@ def reindex_db():
                 if not fn.lower().endswith(".mp4"):
                     continue
                 abs_path = os.path.join(day_dir, fn)
-                rel_path = os.path.relpath(abs_path, STORAGE_BASE)  # e.g. clips/cam01/20250809/file.mp4
+                rel_path = os.path.relpath(abs_path, STORAGE_BASE)  # e.g. clips/cam01/...
 
                 key = abs_path if mode == "legacy" else rel_path
                 if key in existing:
                     continue
 
-                # derive timestamp
                 ts = ts_from_filename(fn)
                 if not ts:
-                    # fallback: file mtime
                     try:
                         mtime = os.path.getmtime(abs_path)
                         dt = datetime.fromtimestamp(mtime, tz=timezone.utc)
@@ -261,12 +277,10 @@ def reindex_db():
     toast(f"Reindex complete: {inserted} added, {errors} errors", color)
 
 def clean_all_files():
-    """Confirm, then delete all clip files and clear clips table."""
     if not messagebox.askyesno("Confirm", "Delete ALL clip files and clear the clips DB table?"):
         toast("Clean canceled", "#bbbbbb")
         return
 
-    # Delete files
     deleted = 0
     for rootdir, dirs, files in os.walk(CLIPS_BASE):
         for f in files:
@@ -276,7 +290,6 @@ def clean_all_files():
             except Exception:
                 pass
 
-    # Clear DB
     try:
         with db_conn() as db:
             db.execute("DELETE FROM clips")
@@ -297,7 +310,6 @@ def toast(msg: str, color: str = "white", timeout_ms: int = 2500):
     if timeout_ms:
         root.after(timeout_ms, lambda: toast_label.config(text=""))
 
-# Top area (leave toast present, original paddings)
 title = tk.Label(root, text="Hub Server Status", font=("Arial", 24, "bold"), fg="white", bg="black")
 title.pack(pady=(6, 2))
 
@@ -307,7 +319,6 @@ toast_label.pack(pady=(0, 4))
 storage_label = tk.Label(root, text="", font=("Arial", 16), fg="white", bg="black")
 storage_label.pack(pady=(0, 6))
 
-# Controls (3 buttons) — above the node list
 controls = tk.Frame(root, bg="black")
 controls.pack(fill="x", padx=10, pady=(2, 6))
 
@@ -332,7 +343,6 @@ btn_clean = tk.Button(
 )
 btn_clean.pack(side="left")
 
-# Scrollable Nodes Section (canvas + scrollbar)
 nodes_section = tk.Frame(root, bg="black")
 nodes_section.pack(fill="both", expand=True, padx=10, pady=(0, 6))
 
@@ -347,17 +357,14 @@ nodes_frame = tk.Frame(canvas, bg="black")
 nodes_window_id = canvas.create_window((0, 0), window=nodes_frame, anchor="nw")
 
 def _on_nodes_frame_configure(event):
-    # Update scrollable region to match inner frame size
     canvas.configure(scrollregion=canvas.bbox("all"))
 
 def _on_nodes_section_configure(event):
-    # Keep inner frame width equal to visible canvas width
     canvas.itemconfig(nodes_window_id, width=event.width)
 
 nodes_frame.bind("<Configure>", _on_nodes_frame_configure)
 nodes_section.bind("<Configure>", _on_nodes_section_configure)
 
-# Mouse & touch-friendly scrolling
 def _on_mousewheel(event):
     if hasattr(event, "delta") and event.delta != 0:
         direction = -1 if event.delta > 0 else 1
@@ -374,25 +381,25 @@ def _on_drag_start(event):
 def _on_drag_move(event):
     canvas.scan_dragto(event.x, event.y, gain=1)
 
-canvas.bind_all("<MouseWheel>", _on_mousewheel)   # Windows/macOS
-canvas.bind_all("<Button-4>", _on_mousewheel)     # X11 up
-canvas.bind_all("<Button-5>", _on_mousewheel)     # X11 down
+canvas.bind_all("<MouseWheel>", _on_mousewheel)
+canvas.bind_all("<Button-4>", _on_mousewheel)
+canvas.bind_all("<Button-5>", _on_mousewheel)
 canvas.bind("<Button-1>", _on_drag_start)
 canvas.bind("<B1-Motion>", _on_drag_move)
 
-# Footer
 footer = tk.Label(root, text="/api/v1/heartbeat · /api/v1/clips", font=("Arial", 12), fg="#888", bg="black")
 footer.pack(pady=(0, 6))
 
 def render_node_row(parent, node: Dict):
     node_id = node.get("node_id") or "—"
-    last_seen = node.get("last_seen")
     ip = node.get("ip")
     version = node.get("version")
     free_space_pct = node.get("free_space_pct")
     queue_len = node.get("queue_len")
 
-    stat = computed_status(last_seen)
+    # unified status from API (already computed)
+    stat = node.get("status", "offline")
+    last_iso = node.get("last_heartbeat_iso") or "—"
     color = status_color(stat)
 
     row = tk.Frame(parent, bg="black")
@@ -409,7 +416,7 @@ def render_node_row(parent, node: Dict):
     chip.pack(side="left")
 
     details = []
-    details.append(f"Last: {last_seen or '—'}")
+    details.append(f"Last: {last_iso}")
     if ip: details.append(f"IP: {ip}")
     if version: details.append(f"Ver: {version}")
     try:
@@ -435,31 +442,43 @@ def refresh():
     else:
         storage_label.config(text=f"Storage OK: {pct:.1f}% free", fg="lime")
 
-    # Clear only node rows
+    # Clear existing node rows
     for w in nodes_frame.winfo_children():
         w.destroy()
 
-    # Nodes
+    # Fetch unified status from API
+    api_map = fetch_api_nodes()  # None on failure
+
+    # Fetch DB rows (for supplemental info)
     try:
-        rows = fetch_nodes()
+        rows = fetch_nodes_from_db()
     except Exception as e:
         tk.Label(nodes_frame, text=f"DB error: {e}", font=("Arial", 16), fg="red", bg="black").pack(anchor="w")
         root.after(2000, refresh)
         return
 
+    # Merge: DB list is authoritative for which nodes to show (preserve extra data)
     if not rows:
         tk.Label(nodes_frame, text="No nodes registered yet…", font=("Arial", 16), fg="gray", bg="black").pack(anchor="w")
     else:
         for node in rows:
+            nid = str(node.get("node_id") or "")
+            if api_map and nid in api_map:
+                node.update(api_map[nid])  # adds status, last_heartbeat_iso, etc.
+            else:
+                # Fallback: compute status from DB's last_seen if API missing/unavailable
+                node["status"] = computed_status_fallback(node.get("last_seen"))
+                node["last_heartbeat_iso"] = node.get("last_seen") or "—"
+                node["skew_ahead"] = 0
             render_node_row(nodes_frame, node)
 
     root.after(2000, refresh)
 
-# Allow exiting with ESC if you’re testing without the service
 def on_key(event):
     if event.keysym == "Escape":
         root.destroy()
 root.bind("<Key>", on_key)
 
+# Build once, then loop
 refresh()
 root.mainloop()

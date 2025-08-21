@@ -9,8 +9,8 @@ HEARTBEAT_STALE_SEC  = 30
 
 # Node shared secrets (env overrides supported)
 NODE_TOKENS = {
-    "cam01": os.environ.get("CAM01_TOKEN", "YOUR_SHARED_SECRET"),
-    # "cam02": os.environ.get("CAM02_TOKEN", "another_secret"),
+    "cam01": os.environ.get("CAM01_TOKEN", "q1w2e3r4t5y6u7i8o9p0"),
+    "cam02": os.environ.get("CAM02_TOKEN", "cam2q1w2e3r4t5y6u7i8o9p0"),
 }
 
 HOST = os.environ.get("HEARTBEAT_HOST", "0.0.0.0")

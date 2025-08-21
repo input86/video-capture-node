@@ -178,21 +178,29 @@ def init_db():
 def parse_any_ts(value: Any) -> Optional[float]:
     if value is None:
         return None
+    # numeric epoch?
     try:
         return float(value)
     except Exception:
         pass
+
     s = str(value).strip()
+
+    # If it ends with 'Z' (UTC), parse as UTC explicitly
     if s.endswith("Z"):
         try:
-            dt = datetime.fromisoformat(s[:-1]).replace(tzinfo=timezone.utc)
+            # handle both with/without fractional secs
+            dt = datetime.fromisoformat(s[:-1])  # naive
+            dt = dt.replace(tzinfo=timezone.utc)
             return dt.timestamp()
         except Exception:
             pass
+
+    # Generic ISO parse. If naive (no tzinfo), **assume UTC** to match node storage & TFT.
     try:
         dt = datetime.fromisoformat(s)
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=datetime.now().astimezone().tzinfo)
+            dt = dt.replace(tzinfo=timezone.utc)
         return dt.astimezone(timezone.utc).timestamp()
     except Exception:
         return None
@@ -220,15 +228,25 @@ def node_id_candidate_columns(cols: List[str]) -> Optional[str]:
     return cols[0] if cols else None
 
 def build_node_row(node_id: str, hb_ts: Optional[float], now_ts: float) -> Dict[str, Any]:
+    """
+    Computes unified status with correct handling of FUTURE heartbeats:
+    - If heartbeat is in the future, we mark as STALE (within HB_STALE) or OFFLINE (beyond).
+      We DO NOT show ONLINE for any future timestamp.
+    """
     if hb_ts is None:
         return {"node_id": node_id, "last_heartbeat": None, "seconds_ago": None,
                 "status": "offline", "skew_ahead": 0}
+
+    if hb_ts > now_ts:
+        skew = int(hb_ts - now_ts + 0.5)
+        status = "stale" if skew <= HB_STALE else "offline"
+        return {"node_id": node_id, "last_heartbeat": hb_ts,
+                "seconds_ago": 0, "status": status, "skew_ahead": skew}
+
     delta = now_ts - hb_ts
-    skew_ahead = int(-delta) if delta < 0 else 0
-    eff_delta = delta if delta >= 0 else 0
-    status = "online" if eff_delta <= HB_ONLINE else ("stale" if eff_delta <= HB_STALE else "offline")
+    status = "online" if delta <= HB_ONLINE else ("stale" if delta <= HB_STALE else "offline")
     return {"node_id": node_id, "last_heartbeat": hb_ts,
-            "seconds_ago": int(eff_delta), "status": status, "skew_ahead": skew_ahead}
+            "seconds_ago": int(delta), "status": status, "skew_ahead": 0}
 
 def get_nodes() -> List[Dict[str, Any]]:
     now = datetime.now(timezone.utc).timestamp()
@@ -296,7 +314,7 @@ def list_recent_clips(limit: int = 200) -> List[Dict[str, Any]]:
         print("list_recent_clips error:", e)
     return items
 
-# >>>>>>>>>>>>>>> NEW: filtered clips helper (P1C) <<<<<<<<<<<<<<<
+# >>>>>>>>>>>>>>> filtered clips helper (P1C) <<<<<<<<<<<<<<<
 def list_clips_filtered(
     start_ts: Optional[float],
     end_ts: Optional[float],
@@ -305,31 +323,17 @@ def list_clips_filtered(
     sort: str = "newest",
     limit: Optional[int] = 200,
 ) -> List[Dict[str, Any]]:
-    """
-    Filesystem-based filter using file mtime.
-    - If all_time is True, start/end are ignored.
-    - sort: 'newest' (desc) or 'oldest' (asc)
-    - limit: max items to return (None => no cap)
-    """
     items: List[Dict[str, Any]] = []
     try:
         if not CLIPS_DIR.exists():
             return items
         paths = list(CLIPS_DIR.glob("**/*.mp4"))
-        # sort by mtime first (so we can early-stop if needed)
         reverse = (sort != "oldest")
         paths.sort(key=lambda p: p.stat().st_mtime, reverse=reverse)
         for p in paths:
             st = p.stat()
             mt = st.st_mtime
             if not all_time:
-                if start_ts is not None and mt < start_ts:
-                    # if ascending and mt < start, continue; if descending and mt < start still ok but we filter
-                    pass
-                if end_ts is not None and mt > end_ts:
-                    # same logic for end bound
-                    pass
-                # simple inclusive window check
                 if (start_ts is not None and mt < start_ts) or (end_ts is not None and mt > end_ts):
                     continue
             items.append({"rel": str(p.relative_to(CLIPS_DIR)), "size": st.st_size, "mtime": mt})
@@ -533,11 +537,26 @@ def nodes_csv():
     resp.headers["Content-Disposition"] = 'attachment; filename="nodes.csv"'
     return resp
 
+# -------------------- NEW: Unified status API --------------------
+
+@app.route("/api/nodes")
+def api_nodes():
+    nodes = get_nodes()
+    for n in nodes:
+        ts = n.get("last_heartbeat")
+        n["last_heartbeat_iso"] = None if ts is None else datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return jsonify({
+        "ok": True,
+        "now_ts": datetime.now(timezone.utc).timestamp(),
+        "hb_online_sec": HB_ONLINE,
+        "hb_stale_sec": HB_STALE,
+        "nodes": nodes
+    }), 200
+
 # -------------------- Clips --------------------
 
 @app.route("/clips")
 def clips_page():
-    # ----- NEW: server-side filtering (P1C) -----
     qs = request.args
     all_time = str(qs.get("all", "")).lower() in ("1", "true", "yes")
     sort = qs.get("sort", "newest")
@@ -547,18 +566,15 @@ def clips_page():
     start_ts = parse_any_ts(start_param) if start_param else None
     end_ts = parse_any_ts(end_param) if end_param else None
 
-    # Default to last 60 minutes unless "all time" requested
     if not all_time:
         if start_ts is None or end_ts is None:
             now_ts = datetime.now(timezone.utc).timestamp()
             end_ts = now_ts
             start_ts = now_ts - 60 * 60
 
-    # If all-time, do not limit; else keep existing page cap (200)
     limit = None if all_time else 200
     clips = list_clips_filtered(start_ts, end_ts, all_time=all_time, sort=sort, limit=limit)
 
-    # Pass filter info to template so JS can prefill UI
     return render_template(
         "clips.html",
         clips=clips,
@@ -805,13 +821,11 @@ def upsert_camera_settings(payload: Dict[str, Any]) -> None:
         dur = 5
     dur = max(2, min(600, dur))
 
-    # sensor threshold (optional; fall back to 1000)
     try:
         thr = payload.get("sensor_threshold_mm", 1000)
         thr = int(thr if thr is not None else 1000)
     except Exception:
         thr = 1000
-    # clamp reasonable range for VL53L0X (approx)
     thr = max(30, min(4000, thr))
 
     res, fps = _profile_to_res_fps(profile)
@@ -915,7 +929,6 @@ def read_node_recording_yaml(ep: Dict[str,str]) -> Tuple[Optional[Dict[str,Any]]
     rec = cfg.get("recording") or {}
     duration = rec.get("duration_s")
 
-    # NEW: sensor threshold (optional)
     sensor_cfg = cfg.get("sensor") or {}
     sensor_threshold_mm = sensor_cfg.get("threshold_mm", None)
 
@@ -945,7 +958,6 @@ def read_node_recording_yaml(ep: Dict[str,str]) -> Tuple[Optional[Dict[str,Any]]
         duration = 5
     duration = max(2, min(600, duration))
 
-    # sanitize sensor threshold
     try:
         if sensor_threshold_mm is not None:
             sensor_threshold_mm = int(sensor_threshold_mm)
@@ -1003,7 +1015,6 @@ def cameras_save():
     if profile not in PROFILES:
         return jsonify({"ok": False, "error": "invalid profile"}), 400
 
-    # load current to preserve fields if omitted
     current = get_camera_settings(cam_id)
 
     try:
@@ -1018,7 +1029,6 @@ def cameras_save():
     if not (2 <= dur <= 600):
         return jsonify({"ok": False, "error": "clip_duration_s out of range (2-600)"}), 400
 
-    # NEW: sensor_threshold_mm (optional)
     try:
         thr_in = data.get("sensor_threshold_mm", current.get("sensor_threshold_mm", 1000))
         thr = int(thr_in)
@@ -1067,7 +1077,6 @@ def cameras_push_to_node():
     except Exception as e:
         return jsonify({"ok": False, "error": f"parse remote YAML failed: {e}"}), 500
 
-    # Write new schema keys (top-level)
     profile = cs.get("profile") or DEFAULT_PROFILE
     if profile not in PROFILES:
         profile = DEFAULT_PROFILE
@@ -1075,7 +1084,6 @@ def cameras_push_to_node():
     cfg["bitrate_kbps"] = int(cs.get("bitrate_kbps", PROFILES[profile]["default_bitrate_kbps"]))
     cfg["rotation"] = int(cs.get("rotation", 0))
 
-    # Always keep duration under recording; mirror res/fps for compatibility
     rec = cfg.get("recording") or {}
     rec["duration_s"] = int(cs.get("clip_duration_s", 5))
     res, fps = _profile_to_res_fps(profile)
@@ -1083,7 +1091,6 @@ def cameras_push_to_node():
     rec["framerate"] = int(fps)
     cfg["recording"] = rec
 
-    # NEW: push sensor threshold (preserve other sensor keys)
     sensor_cfg = cfg.get("sensor") or {}
     sensor_cfg["threshold_mm"] = int(cs.get("sensor_threshold_mm", 1000))
     cfg["sensor"] = sensor_cfg
@@ -1103,7 +1110,6 @@ def cameras_import_from_node():
     if not node_vals:
         return jsonify({"ok": False, "error": f"read node failed: {err or 'unknown'}"}), 500
     node_vals["camera_id"] = cam_id
-    # ensure we have a threshold value even if node omitted it
     if "sensor_threshold_mm" not in node_vals:
         node_vals["sensor_threshold_mm"] = get_camera_settings(cam_id).get("sensor_threshold_mm", 1000)
     upsert_camera_settings(node_vals)
