@@ -1,0 +1,29 @@
+### systemctl status hub-web-admin
+● hub-web-admin.service - Hub Web Admin (Gunicorn behind Nginx)
+     Loaded: loaded (/etc/systemd/system/hub-web-admin.service; enabled; preset: enabled)
+     Active: active (running) since Sat 2025-08-23 22:54:40 EDT; 7min ago
+   Main PID: 774 (gunicorn)
+      Tasks: 5 (limit: 4458)
+        CPU: 2.911s
+     CGroup: /system.slice/hub-web-admin.service
+             ├─774 /home/pi/hub_web_admin/venv/bin/python3 /home/pi/hub_web_admin/venv/bin/gunicorn -w 2 -k gthread --threads 2 -b 127.0.0.1:8080 app:app
+             ├─794 /home/pi/hub_web_admin/venv/bin/python3 /home/pi/hub_web_admin/venv/bin/gunicorn -w 2 -k gthread --threads 2 -b 127.0.0.1:8080 app:app
+             └─796 /home/pi/hub_web_admin/venv/bin/python3 /home/pi/hub_web_admin/venv/bin/gunicorn -w 2 -k gthread --threads 2 -b 127.0.0.1:8080 app:app
+
+Aug 23 22:54:40 hub-server systemd[1]: Started hub-web-admin.service - Hub Web Admin (Gunicorn behind Nginx).
+Aug 23 22:54:41 hub-server gunicorn[774]: [2025-08-23 22:54:41 -0400] [774] [INFO] Starting gunicorn 23.0.0
+Aug 23 22:54:41 hub-server gunicorn[774]: [2025-08-23 22:54:41 -0400] [774] [INFO] Listening at: http://127.0.0.1:8080 (774)
+Aug 23 22:54:41 hub-server gunicorn[774]: [2025-08-23 22:54:41 -0400] [774] [INFO] Using worker: gthread
+Aug 23 22:54:41 hub-server gunicorn[794]: [2025-08-23 22:54:41 -0400] [794] [INFO] Booting worker with pid: 794
+Aug 23 22:54:41 hub-server gunicorn[796]: [2025-08-23 22:54:41 -0400] [796] [INFO] Booting worker with pid: 796
+
+### is-enabled hub-web-admin
+enabled
+
+### show hub-web-admin (selected)
+ExecStart={ path=/home/pi/hub_web_admin/venv/bin/gunicorn ; argv[]=/home/pi/hub_web_admin/venv/bin/gunicorn -w 2 -k gthread --threads 2 -b 127.0.0.1:8080 app:app ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }
+Id=hub-web-admin.service
+Description=Hub Web Admin (Gunicorn behind Nginx)
+ActiveState=active
+SubState=running
+FragmentPath=/etc/systemd/system/hub-web-admin.service

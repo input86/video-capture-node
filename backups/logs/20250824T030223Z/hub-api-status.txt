@@ -1,0 +1,31 @@
+### systemctl status hub-api
+● hub-api.service - Hub API Service
+     Loaded: loaded (/etc/systemd/system/hub-api.service; enabled; preset: enabled)
+     Active: active (running) since Sat 2025-08-23 22:54:40 EDT; 7min ago
+   Main PID: 772 (gunicorn)
+      Tasks: 4 (limit: 4458)
+        CPU: 2.573s
+     CGroup: /system.slice/hub-api.service
+             ├─772 /home/pi/hub_server/venv/bin/python /home/pi/hub_server/venv/bin/gunicorn --workers 3 --bind 0.0.0.0:5000 server:app
+             ├─793 /home/pi/hub_server/venv/bin/python /home/pi/hub_server/venv/bin/gunicorn --workers 3 --bind 0.0.0.0:5000 server:app
+             ├─795 /home/pi/hub_server/venv/bin/python /home/pi/hub_server/venv/bin/gunicorn --workers 3 --bind 0.0.0.0:5000 server:app
+             └─797 /home/pi/hub_server/venv/bin/python /home/pi/hub_server/venv/bin/gunicorn --workers 3 --bind 0.0.0.0:5000 server:app
+
+Aug 23 22:54:40 hub-server systemd[1]: Started hub-api.service - Hub API Service.
+Aug 23 22:54:41 hub-server gunicorn[772]: [2025-08-23 22:54:41 -0400] [772] [INFO] Starting gunicorn 23.0.0
+Aug 23 22:54:41 hub-server gunicorn[772]: [2025-08-23 22:54:41 -0400] [772] [INFO] Listening at: http://0.0.0.0:5000 (772)
+Aug 23 22:54:41 hub-server gunicorn[772]: [2025-08-23 22:54:41 -0400] [772] [INFO] Using worker: sync
+Aug 23 22:54:41 hub-server gunicorn[793]: [2025-08-23 22:54:41 -0400] [793] [INFO] Booting worker with pid: 793
+Aug 23 22:54:41 hub-server gunicorn[795]: [2025-08-23 22:54:41 -0400] [795] [INFO] Booting worker with pid: 795
+Aug 23 22:54:41 hub-server gunicorn[797]: [2025-08-23 22:54:41 -0400] [797] [INFO] Booting worker with pid: 797
+
+### is-enabled hub-api
+enabled
+
+### show hub-api (selected)
+ExecStart={ path=/home/pi/hub_server/venv/bin/gunicorn ; argv[]=/home/pi/hub_server/venv/bin/gunicorn --workers 3 --bind 0.0.0.0:5000 server:app ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }
+Id=hub-api.service
+Description=Hub API Service
+ActiveState=active
+SubState=running
+FragmentPath=/etc/systemd/system/hub-api.service

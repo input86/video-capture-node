@@ -1,0 +1,19 @@
+### systemctl status dpkg-db-backup.timer
+● dpkg-db-backup.timer - Daily dpkg database backup timer
+     Loaded: loaded (/lib/systemd/system/dpkg-db-backup.timer; enabled; preset: enabled)
+     Active: active (waiting) since Sat 2025-08-23 22:54:32 EDT; 8min ago
+    Trigger: Sun 2025-08-24 00:00:00 EDT; 57min left
+   Triggers: ● dpkg-db-backup.service
+       Docs: man:dpkg(1)
+
+Aug 23 22:54:32 hub-server systemd[1]: Started dpkg-db-backup.timer - Daily dpkg database backup timer.
+
+### is-enabled dpkg-db-backup.timer
+enabled
+
+### show dpkg-db-backup.timer (selected)
+Id=dpkg-db-backup.timer
+Description=Daily dpkg database backup timer
+ActiveState=active
+SubState=waiting
+FragmentPath=/lib/systemd/system/dpkg-db-backup.timer

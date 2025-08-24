@@ -1190,6 +1190,59 @@ def node_restart():
     state = (p.stdout or p.stderr).strip()
     return jsonify({"ok": True, "state": state}), 200
 
+@app.route("/action/secure/node/stop", methods=["POST"])
+def node_stop():
+    """
+    Stop the camera node service via SSH (suspend recordings).
+    """
+    data = request.get_json(silent=True) or {}
+    cam = (data.get("camera_id") or "").strip()
+    if not cam:
+        return jsonify({"ok": False, "error": "camera_id required"}), 400
+
+    ep = get_camera_endpoint(cam)
+    host = ep.get("ssh_host") or ""
+    user = ep.get("ssh_user") or "pi"
+    svc  = ep.get("service_name") or "camera-node"
+    if not host:
+        return jsonify({"ok": False, "error": "ssh_host not set"}), 400
+
+    p = _ssh(["ssh", f"{user}@{host}", f"sudo systemctl stop {svc}"])
+    if p.returncode != 0:
+        err = (p.stderr or p.stdout or "").strip()
+        return jsonify({"ok": False, "error": err or "stop failed"}), 500
+
+    # Wait briefly for inactive
+    inactive = wait_unit_state(user, host, svc, "inactive", timeout_sec=12.0)
+    return jsonify({"ok": True, "state": "inactive" if inactive else "unknown"}), 200
+
+
+@app.route("/action/secure/node/start", methods=["POST"])
+def node_start():
+    """
+    Start the camera node service via SSH (resume recordings).
+    """
+    data = request.get_json(silent=True) or {}
+    cam = (data.get("camera_id") or "").strip()
+    if not cam:
+        return jsonify({"ok": False, "error": "camera_id required"}), 400
+
+    ep = get_camera_endpoint(cam)
+    host = ep.get("ssh_host") or ""
+    user = ep.get("ssh_user") or "pi"
+    svc  = ep.get("service_name") or "camera-node"
+    if not host:
+        return jsonify({"ok": False, "error": "ssh_host not set"}), 400
+
+    p = _ssh(["ssh", f"{user}@{host}", f"sudo systemctl start {svc}"])
+    if p.returncode != 0:
+        err = (p.stderr or p.stdout or "").strip()
+        return jsonify({"ok": False, "error": err or "start failed"}), 500
+
+    # Wait briefly for active
+    active = wait_unit_state(user, host, svc, "active", timeout_sec=12.0)
+    return jsonify({"ok": True, "state": "active" if active else "unknown"}), 200
+
 @app.route("/action/secure/node/poweroff", methods=["POST"])
 def node_poweroff():
     """

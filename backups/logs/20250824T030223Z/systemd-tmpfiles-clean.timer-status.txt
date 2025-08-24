@@ -1,0 +1,20 @@
+### systemctl status systemd-tmpfiles-clean.timer
+● systemd-tmpfiles-clean.timer - Daily Cleanup of Temporary Directories
+     Loaded: loaded (/lib/systemd/system/systemd-tmpfiles-clean.timer; static)
+     Active: active (waiting) since Sat 2025-08-23 22:54:32 EDT; 8min ago
+    Trigger: Sat 2025-08-23 23:09:44 EDT; 7min left
+   Triggers: ● systemd-tmpfiles-clean.service
+       Docs: man:tmpfiles.d(5)
+             man:systemd-tmpfiles(8)
+
+Aug 23 22:54:32 hub-server systemd[1]: Started systemd-tmpfiles-clean.timer - Daily Cleanup of Temporary Directories.
+
+### is-enabled systemd-tmpfiles-clean.timer
+static
+
+### show systemd-tmpfiles-clean.timer (selected)
+Id=systemd-tmpfiles-clean.timer
+Description=Daily Cleanup of Temporary Directories
+ActiveState=active
+SubState=waiting
+FragmentPath=/lib/systemd/system/systemd-tmpfiles-clean.timer

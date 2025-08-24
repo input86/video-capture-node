@@ -73,7 +73,10 @@
           <button class="btn btn-sm btn-secondary btn-save-endpoint" data-cam="{{ cam_id }}">Save Endpoint</button>
           <button class="btn btn-sm btn-outline-success btn-push" data-cam="{{ cam_id }}">Push to Node & Restart</button>
           <button class="btn btn-sm btn-outline-info btn-import" data-cam="{{ cam_id }}">Import From Node</button>
-          <!-- NEW: Power Off -->
+          <!-- NEW: Service controls -->
+          <button class="btn btn-sm btn-outline-warning btn-stop" data-cam="{{ cam_id }}">Stop Service</button>
+          <button class="btn btn-sm btn-outline-success btn-start" data-cam="{{ cam_id }}">Start Service</button>
+          <!-- Existing: Power Off -->
           <button class="btn btn-sm btn-outline-danger btn-poweroff" data-cam="{{ cam_id }}">Power Off</button>
           <span class="ms-auto small text-muted">Last updated: {{ cam.updated_at and cam.updated_at|date_fmt or "—" }}</span>
         </div>
@@ -305,9 +308,9 @@ document.addEventListener('input', (ev)=>{
   }
 });
 
-// Delegate button clicks (added .btn-poweroff)
+// Delegate button clicks (includes .btn-stop, .btn-start, .btn-poweroff)
 document.addEventListener('click', async (ev) => {
-  const btn = ev.target.closest('.btn-save, .btn-save-endpoint, .btn-push, .btn-import, .btn-poweroff');
+  const btn = ev.target.closest('.btn-save, .btn-save-endpoint, .btn-push, .btn-import, .btn-stop, .btn-start, .btn-poweroff');
   if(!btn) return;
 
   const cam = btn.dataset.cam;
@@ -352,6 +355,18 @@ document.addEventListener('click', async (ev) => {
     else if (btn.classList.contains('btn-import')) {
       await postJSON('/action/secure/cameras/import_from_node', {camera_id: cam});
       location.reload();
+    }
+
+    else if (btn.classList.contains('btn-stop')) {
+      if(!confirm(`Stop service on ${cam}? This suspends recordings until you start it again.`)) return;
+      await postJSON('/action/secure/node/stop', {camera_id: cam});
+      alert(`${cam} service stopped.`);
+    }
+
+    else if (btn.classList.contains('btn-start')) {
+      if(!confirm(`Start service on ${cam}?`)) return;
+      await postJSON('/action/secure/node/start', {camera_id: cam});
+      alert(`${cam} service started.`);
     }
 
     else if (btn.classList.contains('btn-poweroff')) {
