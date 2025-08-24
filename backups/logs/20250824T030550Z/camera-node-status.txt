@@ -1,0 +1,31 @@
+### systemctl status camera-node
+● camera-node.service - Camera Node Service
+     Loaded: loaded (/etc/systemd/system/camera-node.service; enabled; preset: enabled)
+     Active: active (running) since Sat 2025-08-23 23:03:00 EDT; 2min 55s ago
+   Main PID: 534 (python3)
+      Tasks: 16 (limit: 178)
+        CPU: 1min 5.482s
+     CGroup: /system.slice/camera-node.service
+             └─534 /home/pi/camera_node/venv/bin/python3 /home/pi/camera_node/src/camera_node.py
+
+Aug 23 23:03:13 hub-cam01 python3[534]: [CONFIG] raw=None will be applied in RECORD and LIVE configs
+Aug 23 23:03:14 hub-cam01 python3[534]: [SENSOR] Pulsed XSHUT on GPIO4 (LOW 50ms -> HIGH).
+Aug 23 23:03:14 hub-cam01 python3[534]: [0:00:24.319392542] [534]  INFO Camera camera_manager.cpp:326 libcamera v0.5.1+100-e53bdf1f
+Aug 23 23:03:14 hub-cam01 python3[534]: [0:00:24.482575667] [639]  WARN RPiSdn sdn.cpp:40 Using legacy SDN tuning - please consider moving SDN inside rpi.denoise
+Aug 23 23:03:14 hub-cam01 python3[534]: [0:00:24.487954521] [639]  INFO RPI vc4.cpp:440 Registered camera /base/soc/i2c0mux/i2c@1/imx708@1a to Unicam device /dev/media1 and ISP device /dev/media0
+Aug 23 23:03:14 hub-cam01 python3[534]: [0:00:24.488152021] [639]  INFO RPI pipeline_base.cpp:1107 Using configuration file '/usr/share/libcamera/pipeline/rpi/vc4/rpi_apps.yaml'
+Aug 23 23:03:14 hub-cam01 python3[534]: [0:00:24.509326500] [534]  INFO Camera camera.cpp:1205 configuring streams: (0) 1280x720-XBGR8888/Rec709/Rec709/None/Full
+Aug 23 23:03:14 hub-cam01 python3[534]: [0:00:24.510140614] [639]  INFO RPI vc4.cpp:615 Sensor: /base/soc/i2c0mux/i2c@1/imx708@1a - Selected sensor format: 1536x864-SBGGR10_1X10 - Selected unicam format: 1536x864-pBAA
+Aug 23 23:03:15 hub-cam01 python3[534]: [READY] Profile=storage_saver_720p30 | Res=1280x720 @ 30fps | Bitrate=10000 kbps | Rotation=0°
+Aug 23 23:03:15 hub-cam01 python3[534]: [READY] LIVE API listening on :8080
+
+### is-enabled camera-node
+enabled
+
+### show camera-node (selected)
+ExecStart={ path=/home/pi/camera_node/venv/bin/python3 ; argv[]=/home/pi/camera_node/venv/bin/python3 /home/pi/camera_node/src/camera_node.py ; ignore_errors=no ; start_time=[Sat 2025-08-23 23:03:00 EDT] ; stop_time=[n/a] ; pid=534 ; code=(null) ; status=0/0 }
+Id=camera-node.service
+Description=Camera Node Service
+ActiveState=active
+SubState=running
+FragmentPath=/etc/systemd/system/camera-node.service
