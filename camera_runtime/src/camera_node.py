@@ -230,6 +230,7 @@ def log(msg):
 # Camera & Sensor Init
 # ==========
 log("[INIT] Initializing VL53L0X sensor and camera...")
+log("[CONFIG] raw=None will be applied in RECORD and LIVE configs")  # marker to confirm correct file is running
 
 # Optional XSHUT pulse
 if XSHUT_GPIO is not None:
@@ -281,7 +282,8 @@ try:
 except Exception:
     pass
 
-record_config = picam2.create_video_configuration(main={"size": REC_RES}, **transform_kw)
+# ---- MINIMAL CHANGE: disable RAW stream to avoid IMX708 PDAF path
+record_config = picam2.create_video_configuration(main={"size": REC_RES}, raw=None, **transform_kw)
 picam2.configure(record_config)
 if controls:
     try:
@@ -445,8 +447,7 @@ class _MJPEGOutput(Output):
             # frame is already a full JPEG image (bytes-like)
             FRAMEBUS.write(frame)
             LIVE_LAST_ACTIVITY = time.monotonic()
-        except Exception as e:
-            # Don't raise inside encoder thread; just note error
+        except Exception:
             pass
 
 def _enter_live(led: LedController):
@@ -466,8 +467,10 @@ def _enter_live(led: LedController):
             except Exception:
                 pass
 
+        # ---- MINIMAL CHANGE: disable RAW in LIVE config too
         live_config = picam2.create_video_configuration(
             main={"size": REC_RES, "format": "YUV420"},
+            raw=None,
             **transform_kw_live
         )
         picam2.configure(live_config)
