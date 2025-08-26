@@ -328,6 +328,13 @@ def uploader_thread_fn(led: LedController):
                 file_path.unlink(missing_ok=True)
             except Exception as e:
                 log(f"[UPLOAD] Cleanup error for {file_path.name}: {e}")
+            # --- NEW: if we just cleared the last queued file, flip LED back to idle (when not LIVE)
+            try:
+                if file_path.parent == QUEUE_DIR and MODE == "RECORD":
+                    if not any(QUEUE_DIR.glob("*.mp4")):
+                        led.set_mode("idle")
+            except Exception as e:
+                log(f"[LED] post-upload check exception: {e}")
         else:
             try:
                 QUEUE_DIR.mkdir(parents=True, exist_ok=True)
@@ -344,9 +351,15 @@ def retry_scanner_thread_fn(led: LedController):
         try:
             queued = sorted([p for p in QUEUE_DIR.glob("*.mp4") if p.is_file()])
             if queued:
-                led.set_mode("error")
+                # keep existing behavior: show 'error' while queued files exist (only if not LIVE)
+                if MODE == "RECORD":
+                    led.set_mode("error")
                 for p in queued:
                     upload_queue.put(p)
+            else:
+                # --- NEW: nothing queued anymore; if not LIVE, ensure LED returns to idle
+                if MODE == "RECORD":
+                    led.set_mode("idle")
         except Exception as e:
             log(f"[RETRY] Scanner exception: {e}")
         for _ in range(30):

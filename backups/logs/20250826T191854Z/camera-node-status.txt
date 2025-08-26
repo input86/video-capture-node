@@ -1,0 +1,31 @@
+### systemctl status camera-node
+● camera-node.service - Camera Node Service
+     Loaded: loaded (/etc/systemd/system/camera-node.service; enabled; preset: enabled)
+     Active: active (running) since Tue 2025-08-26 15:11:55 EDT; 7min ago
+   Main PID: 787 (python3)
+      Tasks: 15 (limit: 178)
+        CPU: 1min 16.338s
+     CGroup: /system.slice/camera-node.service
+             └─787 /home/pi/camera_node/venv/bin/python3 /home/pi/camera_node/src/camera_node.py
+
+Aug 26 15:14:01 hub-cam01 python3[811]:     encoder         : Lavf59.27.100
+Aug 26 15:14:01 hub-cam01 python3[811]:   Stream #0:0: Video: h264 (High) (avc1 / 0x31637661), yuv420p(tv, bt709, progressive), 1280x720, q=2-31, 30 fps, 30 tbr, 1200k tbn
+Aug 26 15:14:01 hub-cam01 python3[811]: Stream mapping:
+Aug 26 15:14:01 hub-cam01 python3[811]:   Stream #0:0 -> #0:0 (copy)
+Aug 26 15:14:01 hub-cam01 python3[811]: Press [q] to stop, [?] for help
+Aug 26 15:14:01 hub-cam01 python3[811]: [mp4 @ 0x55ccf15fb0] Timestamps are unset in a packet for stream 0. This is deprecated and will stop working in the future. Fix your code to set the timestamps properly
+Aug 26 15:14:01 hub-cam01 python3[811]: [194B blob data]
+Aug 26 15:14:01 hub-cam01 python3[811]: video:1095kB audio:0kB subtitle:0kB other streams:0kB global headers:0kB muxing overhead: 0.247242%
+Aug 26 15:14:03 hub-cam01 python3[787]: [RECORD] Saved: cam01_20250826T191351Z.mp4
+Aug 26 15:14:03 hub-cam01 python3[787]: [UPLOAD] OK: cam01_20250826T191351Z.mp4
+
+### is-enabled camera-node
+enabled
+
+### show camera-node (selected)
+ExecStart={ path=/home/pi/camera_node/venv/bin/python3 ; argv[]=/home/pi/camera_node/venv/bin/python3 /home/pi/camera_node/src/camera_node.py ; ignore_errors=no ; start_time=[Tue 2025-08-26 15:11:55 EDT] ; stop_time=[n/a] ; pid=787 ; code=(null) ; status=0/0 }
+Id=camera-node.service
+Description=Camera Node Service
+ActiveState=active
+SubState=running
+FragmentPath=/etc/systemd/system/camera-node.service
