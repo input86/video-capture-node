@@ -1,0 +1,20 @@
+### systemctl status logrotate.timer
+● logrotate.timer - Daily rotation of log files
+     Loaded: loaded (/lib/systemd/system/logrotate.timer; enabled; preset: enabled)
+     Active: active (waiting) since Sun 2025-08-24 09:35:52 EDT; 2 days ago
+    Trigger: Wed 2025-08-27 00:00:00 EDT; 6h left
+   Triggers: ● logrotate.service
+       Docs: man:logrotate(8)
+             man:logrotate.conf(5)
+
+Aug 24 09:35:52 hub-server systemd[1]: Started logrotate.timer - Daily rotation of log files.
+
+### is-enabled logrotate.timer
+enabled
+
+### show logrotate.timer (selected)
+Id=logrotate.timer
+Description=Daily rotation of log files
+ActiveState=active
+SubState=waiting
+FragmentPath=/lib/systemd/system/logrotate.timer

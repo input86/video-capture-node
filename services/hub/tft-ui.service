@@ -1,8 +1,7 @@
-# /etc/systemd/system/tft-ui.service
 [Unit]
 Description=TFT UI Service
-After=graphical.target
 Wants=graphical.target
+After=graphical.target display-manager.service
 
 [Service]
 Type=simple
@@ -10,10 +9,16 @@ User=pi
 Group=pi
 Environment=DISPLAY=:0
 Environment=XAUTHORITY=/home/pi/.Xauthority
+# Optional: unbuffered logs, helps debugging
+Environment=PYTHONUNBUFFERED=1
+# Use launcher that waits for X and activates venv
+ExecStart=/usr/local/bin/tft-ui-launch.sh
 WorkingDirectory=/home/pi/hub_server
-ExecStart=/home/pi/hub_server/venv/bin/python /home/pi/hub_server/tft_ui.py
-Restart=always
+Restart=on-failure
 RestartSec=3
+TimeoutStartSec=90
+StartLimitIntervalSec=30
+StartLimitBurst=10
 
 [Install]
 WantedBy=graphical.target

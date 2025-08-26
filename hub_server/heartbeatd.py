@@ -56,6 +56,13 @@ def ensure_columns():
         for name, typ in wanted:
             if name not in cols:
                 con.execute(f"ALTER TABLE nodes ADD COLUMN {name} {typ};")
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS node_tokens(
+                node_id    TEXT PRIMARY KEY,
+                token      TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+        """)
         con.commit()
 
 def ensure_schema():
@@ -111,11 +118,28 @@ def upsert_node(node_id: str, fields: Dict[str, Any]):
             con.execute(f"UPDATE nodes SET {sets} WHERE {pk}=?;", vals)
         con.commit()
 
+# ----------- token/auth helpers (DB first, fallback to legacy) -----------
+
+def _db_token_for_node(node_id: str) -> Optional[str]:
+    try:
+        with db() as con:
+            cur = con.execute("SELECT token FROM node_tokens WHERE node_id=?;", (node_id,))
+            r = cur.fetchone()
+            return r["token"] if r else None
+    except Exception:
+        return None
+
 def auth_ok(node_id: str, token: str) -> bool:
+    if not node_id or not token:
+        return False
+    db_tok = _db_token_for_node(node_id)
+    if db_tok:
+        return token == db_tok
+    # Fallback to legacy mapping for compatibility
     expected = NODE_TOKENS.get(node_id)
     return (expected is not None) and (token == expected)
 
-# ----------- coercion helpers (NEW) -----------
+# ----------- coercion helpers -----------
 
 def to_str(x) -> Optional[str]:
     if x is None: return None
@@ -135,7 +159,6 @@ def to_float(x) -> Optional[float]:
 def to_int(x) -> Optional[int]:
     if x is None: return None
     try:
-        # handle cases like "0", "12", 12.0
         return int(float(x))
     except Exception:
         return None
@@ -156,23 +179,18 @@ def heartbeat():
     if not auth_ok(node_id, token):
         return jsonify({"error": "unauthorized"}), 401
 
-    # Gather + coerce
+    # Prefer X-Forwarded-For if present
     ip_hdr    = request.headers.get("X-Forwarded-For")
     ip        = to_str(ip_hdr) or to_str(request.remote_addr)
     version   = to_str((payload or {}).get("version"))
     free_pct  = to_float((payload or {}).get("free_space_pct"))
     queue_len = to_int((payload or {}).get("queue_len"))
 
-    # Only update fields we actually have (won't overwrite prior non-null with NULL)
-    fields: Dict[str, Any] = {"last_seen": utcnow_iso()}
-    if ip is not None:
-        fields["ip"] = ip
-    if version is not None:
-        fields["version"] = version
-    if free_pct is not None:
-        fields["free_space_pct"] = free_pct
-    if queue_len is not None:
-        fields["queue_len"] = queue_len
+    fields: Dict[str, Any] = {"last_seen": utcnow_iso(), "status": "online"}
+    if ip is not None:        fields["ip"] = ip
+    if version is not None:   fields["version"] = version
+    if free_pct is not None:  fields["free_space_pct"] = free_pct
+    if queue_len is not None: fields["queue_len"] = queue_len
 
     upsert_node(node_id, fields)
     return jsonify({"ok": True, "server_time": utcnow_iso()})
@@ -185,7 +203,7 @@ def api_nodes():
 def root():
     return jsonify({"nodes": get_nodes()})
 
-# Tiny HTML UI (optional, for quick glance)
+# Tiny HTML UI (optional)
 _UI = """<!doctype html><meta charset="utf-8"><title>Nodes</title>
 <style>body{font-family:system-ui;background:#0b0f12;color:#e5e7eb;margin:10px}
 .card{background:#111827;border:1px solid #1f2937;border-radius:12px;padding:10px;margin:8px 0}

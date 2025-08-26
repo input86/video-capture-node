@@ -1,6 +1,9 @@
+claim_key: "7e9c778a62485237fd0ad78f011ca77d"
+
 auth_tokens:
   cam01: "q1w2e3r4t5y6u7i8o9p0"
   cam02: "cam2q1w2e3r4t5y6u7i8o9p0"
+
 storage:
   base_dir: "/home/pi/data"
   clips_subdir: "clips"
