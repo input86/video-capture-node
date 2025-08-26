@@ -1,0 +1,31 @@
+### systemctl status camera-heartbeat
+● camera-heartbeat.service - Camera Heartbeat Client
+     Loaded: loaded (/etc/systemd/system/camera-heartbeat.service; enabled; preset: enabled)
+     Active: active (running) since Tue 2025-08-26 15:05:36 EDT; 17min ago
+   Main PID: 609 (python)
+      Tasks: 1 (limit: 178)
+        CPU: 2.572s
+     CGroup: /system.slice/camera-heartbeat.service
+             └─609 /home/pi/camera_node/venv/bin/python /home/pi/camera_node/heartbeat_client.py
+
+Aug 26 15:22:09 hub-cam01 python[609]: [hb] POST http://192.168.0.150:5000/api/v1/heartbeat payload={'node_id': 'cam01', 'version': 'camnode-1.0.0', 'hostname': 'hub-cam01', 'free_space_pct': 91.9, 'queue_len': 0}
+Aug 26 15:22:09 hub-cam01 python[609]: [hb] status=200 ok
+Aug 26 15:22:19 hub-cam01 python[609]: [hb] POST http://192.168.0.150:5000/api/v1/heartbeat payload={'node_id': 'cam01', 'version': 'camnode-1.0.0', 'hostname': 'hub-cam01', 'free_space_pct': 91.9, 'queue_len': 0}
+Aug 26 15:22:19 hub-cam01 python[609]: [hb] status=200 ok
+Aug 26 15:22:29 hub-cam01 python[609]: [hb] POST http://192.168.0.150:5000/api/v1/heartbeat payload={'node_id': 'cam01', 'version': 'camnode-1.0.0', 'hostname': 'hub-cam01', 'free_space_pct': 91.9, 'queue_len': 0}
+Aug 26 15:22:29 hub-cam01 python[609]: [hb] status=-1 body=ChunkedEncodingError: ("Connection broken: ConnectionResetError(104, 'Connection reset by peer')", ConnectionResetError(104, 'Connection reset by peer'))
+Aug 26 15:23:06 hub-cam01 python[609]: [hb] POST http://192.168.0.150:5000/api/v1/heartbeat payload={'node_id': 'cam01', 'version': 'camnode-1.0.0', 'hostname': 'hub-cam01', 'free_space_pct': 91.9, 'queue_len': 0}
+Aug 26 15:23:06 hub-cam01 python[609]: [hb] status=200 ok
+Aug 26 15:23:16 hub-cam01 python[609]: [hb] POST http://192.168.0.150:5000/api/v1/heartbeat payload={'node_id': 'cam01', 'version': 'camnode-1.0.0', 'hostname': 'hub-cam01', 'free_space_pct': 91.9, 'queue_len': 0}
+Aug 26 15:23:16 hub-cam01 python[609]: [hb] status=200 ok
+
+### is-enabled camera-heartbeat
+enabled
+
+### show camera-heartbeat (selected)
+ExecStart={ path=/home/pi/camera_node/venv/bin/python ; argv[]=/home/pi/camera_node/venv/bin/python /home/pi/camera_node/heartbeat_client.py ; ignore_errors=no ; start_time=[Tue 2025-08-26 15:05:36 EDT] ; stop_time=[n/a] ; pid=609 ; code=(null) ; status=0/0 }
+Id=camera-heartbeat.service
+Description=Camera Heartbeat Client
+ActiveState=active
+SubState=running
+FragmentPath=/etc/systemd/system/camera-heartbeat.service
