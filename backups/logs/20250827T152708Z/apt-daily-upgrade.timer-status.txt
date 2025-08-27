@@ -1,0 +1,18 @@
+### systemctl status apt-daily-upgrade.timer
+● apt-daily-upgrade.timer - Daily apt upgrade and clean activities
+     Loaded: loaded (/lib/systemd/system/apt-daily-upgrade.timer; enabled; preset: enabled)
+     Active: active (waiting) since Tue 2025-08-26 23:33:03 EDT; 11h ago
+    Trigger: Thu 2025-08-28 06:40:52 EDT; 19h left
+   Triggers: ● apt-daily-upgrade.service
+
+Aug 26 23:33:03 hub-server systemd[1]: Started apt-daily-upgrade.timer - Daily apt upgrade and clean activities.
+
+### is-enabled apt-daily-upgrade.timer
+enabled
+
+### show apt-daily-upgrade.timer (selected)
+Id=apt-daily-upgrade.timer
+Description=Daily apt upgrade and clean activities
+ActiveState=active
+SubState=waiting
+FragmentPath=/lib/systemd/system/apt-daily-upgrade.timer

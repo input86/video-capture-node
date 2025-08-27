@@ -1,0 +1,29 @@
+### systemctl status hub-web-admin
+● hub-web-admin.service - Hub Web Admin (Gunicorn behind Nginx)
+     Loaded: loaded (/etc/systemd/system/hub-web-admin.service; enabled; preset: enabled)
+     Active: active (running) since Tue 2025-08-26 23:33:11 EDT; 11h ago
+   Main PID: 765 (gunicorn)
+      Tasks: 7 (limit: 4458)
+        CPU: 47.050s
+     CGroup: /system.slice/hub-web-admin.service
+             ├─765 /home/pi/hub_web_admin/venv/bin/python3 /home/pi/hub_web_admin/venv/bin/gunicorn -w 2 -k gthread --threads 2 -b 127.0.0.1:8080 app:app
+             ├─783 /home/pi/hub_web_admin/venv/bin/python3 /home/pi/hub_web_admin/venv/bin/gunicorn -w 2 -k gthread --threads 2 -b 127.0.0.1:8080 app:app
+             └─786 /home/pi/hub_web_admin/venv/bin/python3 /home/pi/hub_web_admin/venv/bin/gunicorn -w 2 -k gthread --threads 2 -b 127.0.0.1:8080 app:app
+
+Aug 26 23:33:11 hub-server systemd[1]: Started hub-web-admin.service - Hub Web Admin (Gunicorn behind Nginx).
+Aug 26 23:33:12 hub-server gunicorn[765]: [2025-08-26 23:33:12 -0400] [765] [INFO] Starting gunicorn 23.0.0
+Aug 26 23:33:12 hub-server gunicorn[765]: [2025-08-26 23:33:12 -0400] [765] [INFO] Listening at: http://127.0.0.1:8080 (765)
+Aug 26 23:33:12 hub-server gunicorn[765]: [2025-08-26 23:33:12 -0400] [765] [INFO] Using worker: gthread
+Aug 26 23:33:12 hub-server gunicorn[783]: [2025-08-26 23:33:12 -0400] [783] [INFO] Booting worker with pid: 783
+Aug 26 23:33:12 hub-server gunicorn[786]: [2025-08-26 23:33:12 -0400] [786] [INFO] Booting worker with pid: 786
+
+### is-enabled hub-web-admin
+enabled
+
+### show hub-web-admin (selected)
+ExecStart={ path=/home/pi/hub_web_admin/venv/bin/gunicorn ; argv[]=/home/pi/hub_web_admin/venv/bin/gunicorn -w 2 -k gthread --threads 2 -b 127.0.0.1:8080 app:app ; ignore_errors=no ; start_time=[Tue 2025-08-26 23:33:11 EDT] ; stop_time=[n/a] ; pid=765 ; code=(null) ; status=0/0 }
+Id=hub-web-admin.service
+Description=Hub Web Admin (Gunicorn behind Nginx)
+ActiveState=active
+SubState=running
+FragmentPath=/etc/systemd/system/hub-web-admin.service
