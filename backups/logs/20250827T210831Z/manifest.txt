@@ -1,0 +1,8 @@
+UTC: 2025-08-27T21:08:31Z
+Host: hub-cam01-
+node_id: cam01
+Runtime: /home/pi/camera_node
+Repo dst: camera_runtime
+Services (explicit): camera-node camera-heartbeat
+Services (auto): camera-heartbeat camera-node
+Label: Metrics Fix

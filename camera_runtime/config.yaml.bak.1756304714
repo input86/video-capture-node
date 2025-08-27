@@ -1,6 +1,6 @@
 hub_url: http://192.168.0.150:5000
 node_id: cam01
-auth_token: b8bc8587969a2488d8bba9ec6feaae71
+auth_token: q1w2e3r4t5y6u7i8o9p0
 profile: storage_saver_720p30
 bitrate_kbps: 10000
 rotation: 0
