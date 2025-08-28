@@ -1,0 +1,29 @@
+---------------REGISTER ON HUB-----------------
+/home/pi/hub_server/bin/node-token.py add cam03
+# (use the printed token in the JSON above)
+
+---------------IMAGE AND ADD cam-sysprep.json--------------
+
+{
+  "node_id": "cam03",
+  "hub_url": "http://192.168.0.150:5000",
+  "auth_token": "<186c03bb6baa910550569841834f723d>",
+  "hostname": "hub-cam03",
+  "wifi": {
+    "ssid": "highlight5g",
+    "psk":  "@l00pp00l",
+    "country": "US"
+  },
+  "network": {
+    "iface": "wlan0",
+    "ip": "192.168.0.153/24",
+    "routers": "192.168.0.1",
+    "dns": ["192.168.0.1","8.8.8.8"]
+  }
+}
+
+------------SSH KEY ON HUB After Boot----------------
+IP=192.168.0.153
+ssh-keygen -R "$IP" || true
+ssh-keyscan -t ed25519 -H "$IP" 2>/dev/null >> /home/pi/.ssh/known_hosts
+chmod 600 /home/pi/.ssh/known_hosts

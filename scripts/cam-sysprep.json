@@ -1,0 +1,17 @@
+{
+  "node_id": "cam03",
+  "hub_url": "http://192.168.0.150:5000",
+  "auth_token": "<186c03bb6baa910550569841834f723d>",
+  "hostname": "hub-cam03",
+  "wifi": {
+    "ssid": "highlight5g",
+    "psk":  "@l00pp00l",
+    "country": "US"
+  },
+  "network": {
+    "iface": "wlan0",
+    "ip": "192.168.0.153/24",
+    "routers": "192.168.0.1",
+    "dns": ["192.168.0.1","8.8.8.8"]
+  }
+}
