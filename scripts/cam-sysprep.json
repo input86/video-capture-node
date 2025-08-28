@@ -1,7 +1,7 @@
 {
   "node_id": "cam03",
   "hub_url": "http://192.168.0.150:5000",
-  "auth_token": "<186c03bb6baa910550569841834f723d>",
+  "auth_token": "a20565b67edc8aa197ee1c5ffe3470e1",
   "hostname": "hub-cam03",
   "wifi": {
     "ssid": "highlight5g",

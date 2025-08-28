@@ -23,7 +23,37 @@
 }
 
 ------------SSH KEY ON HUB After Boot----------------
+First put IP on WEBUI host
+then:
+
 IP=192.168.0.153
 ssh-keygen -R "$IP" || true
 ssh-keyscan -t ed25519 -H "$IP" 2>/dev/null >> /home/pi/.ssh/known_hosts
 chmod 600 /home/pi/.ssh/known_hosts
+
+
+---------Check It Registered on HUB------------
+
+# Node appears with correct id + online within ~10–20s
+curl -s http://127.0.0.1:8080/api/nodes \
+ | python3 -c 'import sys,json;print([(n["node_id"], n["status"]) for n in json.load(sys.stdin)["nodes"]])'
+
+
+---------WEBUI Manage Node--------
+First put IP on WEBUI host
+then:
+
+DB=/home/pi/data/hub.db
+IP=$(sqlite3 "$DB" "SELECT ssh_host FROM camera_endpoints WHERE camera_id='cam03';")
+ssh-keygen -R "$IP" || true
+ssh-keyscan -t ed25519 -H "$IP" 2>/dev/null >> /home/pi/.ssh/known_hosts
+chmod 600 /home/pi/.ssh/known_hosts
+
+----- Additional Checks--------
+# Should show the earlier successful run (from first boot)
+journalctl -u cam-firstboot -n 20 --no-pager
+
+# Should be running now
+systemctl is-active camera-node && echo "camera-node running"
+
+
