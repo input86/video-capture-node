@@ -1,0 +1,31 @@
+### systemctl status camera-node
+● camera-node.service - Camera Node Service
+     Loaded: loaded (/etc/systemd/system/camera-node.service; enabled; preset: enabled)
+     Active: active (running) since Tue 2025-09-02 21:37:41 EDT; 4min 11s ago
+   Main PID: 13167 (python3)
+      Tasks: 15 (limit: 178)
+        CPU: 1min 2.172s
+     CGroup: /system.slice/camera-node.service
+             └─13167 /home/pi/camera_node/venv/bin/python3 /home/pi/camera_node/src/camera_node.py
+
+Sep 02 21:38:49 hub-cam01 python3[13195]:   Stream #0:0: Video: h264 (High) (avc1 / 0x31637661), yuv420p(tv, bt709, progressive), 1920x1080, q=2-31, 30 fps, 30 tbr, 12800 tbn
+Sep 02 21:38:49 hub-cam01 python3[13195]: Stream mapping:
+Sep 02 21:38:49 hub-cam01 python3[13195]:   Stream #0:0 -> #0:0 (copy)
+Sep 02 21:38:49 hub-cam01 python3[13195]: Press [q] to stop, [?] for help
+Sep 02 21:38:49 hub-cam01 python3[13195]: [mp4 @ 0x558581c4a0] Timestamps are unset in a packet for stream 0. This is deprecated and will stop working in the future. Fix your code to set the timestamps properly
+Sep 02 21:38:51 hub-cam01 python3[13195]: [487B blob data]
+Sep 02 21:38:52 hub-cam01 python3[13195]: frame=  332 fps=108 q=-1.0 Lsize=   28073kB time=00:00:06.62 bitrate=34738.4kbits/s speed=2.14x
+Sep 02 21:38:52 hub-cam01 python3[13195]: video:28070kB audio:0kB subtitle:0kB other streams:0kB global headers:0kB muxing overhead: 0.008788%
+Sep 02 21:38:55 hub-cam01 python3[13167]: [RECORD] Saved: cam01_20250903T013829Z.mp4
+Sep 02 21:39:00 hub-cam01 python3[13167]: [UPLOAD] OK: cam01_20250903T013829Z.mp4
+
+### is-enabled camera-node
+enabled
+
+### show camera-node (selected)
+ExecStart={ path=/home/pi/camera_node/venv/bin/python3 ; argv[]=/home/pi/camera_node/venv/bin/python3 /home/pi/camera_node/src/camera_node.py ; ignore_errors=no ; start_time=[Tue 2025-09-02 21:37:41 EDT] ; stop_time=[n/a] ; pid=13167 ; code=(null) ; status=0/0 }
+Id=camera-node.service
+Description=Camera Node Service
+ActiveState=active
+SubState=running
+FragmentPath=/etc/systemd/system/camera-node.service

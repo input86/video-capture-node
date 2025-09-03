@@ -10,7 +10,7 @@ import signal
 from datetime import datetime, timezone
 from pathlib import Path
 from subprocess import run, CalledProcessError
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict, Any, List
 
 import board, busio
 from adafruit_vl53l0x import VL53L0X
@@ -19,11 +19,16 @@ from picamera2 import Picamera2
 from picamera2.encoders import H264Encoder, MJPEGEncoder
 from picamera2.outputs import Output  # for custom MJPEG sink
 
-# libcamera Transform for rotation (0/90/180/270)
+# libcamera Transform and controls (AF/AE/AWB)
 try:
     from libcamera import Transform
 except Exception:
     Transform = None  # Fallback: if unavailable, rotation control is skipped
+
+try:
+    from libcamera import controls as LCTRLS
+except Exception:
+    LCTRLS = None  # We'll gracefully no-op where controls don't exist
 
 # ==========
 # Config / Paths
@@ -45,10 +50,11 @@ PROFILES = {
         "max_bitrate_kbps": 18000,
         "default_rotation": 0
     },
-    "action_1080p60": {
+    # RENAMED: action_1080p60 -> action_1080p50
+    "action_1080p50": {
         "resolution": (1920, 1080),
-        "fps": 60,
-        "gop": 120,
+        "fps": 50,
+        "gop": 100,  # 2s keyframe interval at 50fps
         "h264_level": "4.2",
         "default_bitrate_kbps": 24000,
         "min_bitrate_kbps": 22000,
@@ -165,6 +171,189 @@ QUEUE_DIR = ROOT_DIR / "queue"
 QUEUE_DIR.mkdir(parents=True, exist_ok=True)
 
 # ==========
+# Autofocus config & helpers
+# ==========
+AF_CFG: Dict[str, Any] = CFG.get("autofocus", {}) or {}
+AF_STRATEGY = str(AF_CFG.get("strategy", "continuous_lock_on_record")).lower()
+AF_RANGE_STR = str(AF_CFG.get("range", "normal")).lower()  # normal | macro | full
+AF_SPEED_STR = str(AF_CFG.get("speed", "fast")).lower()    # fast | normal
+AF_ROI = AF_CFG.get("roi_norm", None)  # [x, y, w, h] in 0..1; we’ll bias AF to this window if present
+
+def log(msg):
+    print(msg, flush=True)
+
+def _af_enum_range():
+    if not LCTRLS:
+        return None
+    m = {
+        "normal": getattr(LCTRLS.AfRangeEnum, "Normal", None),
+        "macro": getattr(LCTRLS.AfRangeEnum, "Macro", None),
+        "full": getattr(LCTRLS.AfRangeEnum, "Full", None),
+    }
+    return m.get(AF_RANGE_STR, m["normal"])
+
+def _af_enum_speed():
+    if not LCTRLS:
+        return None
+    m = {
+        "fast": getattr(LCTRLS.AfSpeedEnum, "Fast", None),
+        "normal": getattr(LCTRLS.AfSpeedEnum, "Normal", None),
+    }
+    return m.get(AF_SPEED_STR, m["fast"])
+
+def _af_mode(value_name: str):
+    if not LCTRLS:
+        return None
+    return getattr(LCTRLS.AfModeEnum, value_name, None)
+
+def _af_metering_windows_enum():
+    if not LCTRLS:
+        return None
+    return getattr(LCTRLS.AfMeteringEnum, "Windows", None)
+
+def _af_apply_roi(p2: Picamera2):
+    """Apply AF metering windows based on AF_ROI (normalized), mapped to output size."""
+    if not LCTRLS or not AF_ROI or not isinstance(AF_ROI, (list, tuple)) or len(AF_ROI) != 4:
+        return
+    try:
+        nx, ny, nw, nh = [float(v) for v in AF_ROI]
+        nx = max(0.0, min(1.0, nx))
+        ny = max(0.0, min(1.0, ny))
+        nw = max(0.0, min(1.0 - nx, nw))
+        nh = max(0.0, min(1.0 - ny, nh))
+
+        W, H = REC_RES
+        x = int(nx * W)
+        y = int(ny * H)
+        w = max(1, int(nw * W))
+        h = max(1, int(nh * H))
+
+        ctrls = {}
+        met = _af_metering_windows_enum()
+        if met is not None:
+            ctrls["AfMetering"] = met
+        ctrls["AfWindows"] = [(x, y, w, h)]
+
+        p2.set_controls(ctrls)
+        log(f"[AF] ROI applied → AfWindows=[({x},{y},{w},{h})]")
+    except Exception as e:
+        log(f"[AF] ROI apply failed: {e}")
+
+def _apply_af_idle(p2: Picamera2):
+    """Apply baseline AF (mode/range/speed) while idle."""
+    if not LCTRLS:
+        log("[AF] Controls not available (no libcamera.controls); AF skipped.")
+        return
+    try:
+        if AF_STRATEGY in ("continuous_lock_on_record", "continuous"):
+            base = {"AfMode": _af_mode("Continuous"),
+                    "AfRange": _af_enum_range(),
+                    "AfSpeed": _af_enum_speed()}
+        elif AF_STRATEGY == "one_shot_on_record":
+            base = {"AfMode": _af_mode("Auto"),
+                    "AfRange": _af_enum_range(),
+                    "AfSpeed": _af_enum_speed()}
+        elif AF_STRATEGY == "manual":
+            base = {"AfMode": _af_mode("Manual")}
+        else:
+            base = {"AfMode": _af_mode("Continuous"),
+                    "AfRange": _af_enum_range(),
+                    "AfSpeed": _af_enum_speed()}
+
+        p2.set_controls({k: v for k, v in base.items() if v is not None})
+        _af_apply_roi(p2)
+        log(f"[AF] Idle set → strategy={AF_STRATEGY}, range={AF_RANGE_STR}, speed={AF_SPEED_STR}")
+    except Exception as e:
+        log(f"[AF] Idle set failed: {e}")
+
+def _af_pause_lock(p2: Picamera2) -> bool:
+    """Lock focus for the clip duration: prefer AfPause, fallback to Manual at current LensPosition."""
+    if not LCTRLS:
+        return False
+    try:
+        p2.set_controls({"AfPause": True})
+        log("[AF] Locked via AfPause=True")
+        return True
+    except Exception:
+        pass
+    try:
+        md = p2.capture_metadata()
+        lens = md.get("LensPosition", None)
+        if lens is not None:
+            p2.set_controls({"AfMode": _af_mode("Manual"), "LensPosition": float(lens)})
+            log(f"[AF] Locked via Manual at LensPosition={lens:.2f}")
+            return True
+    except Exception as e:
+        log(f"[AF] Manual lock fallback failed: {e}")
+    return False
+
+def _af_resume(p2: Picamera2):
+    """Resume baseline AF after clip."""
+    if not LCTRLS:
+        return
+    try:
+        p2.set_controls({"AfPause": False})
+        log("[AF] Unpaused (AfPause=False)")
+    except Exception:
+        pass
+    try:
+        _apply_af_idle(picam2)
+    except Exception as e:
+        log(f"[AF] Resume baseline failed: {e}")
+
+# ==========
+# AE / AWB helpers
+# ==========
+def _apply_ae_awb_idle(p2: Picamera2):
+    """Bias exposure to shorter shutter; keep flicker OFF (Auto not supported on this build)."""
+    if not LCTRLS:
+        return
+    try:
+        ctrls = {}
+        expo = getattr(LCTRLS.AeExposureModeEnum, "Short", None)
+        if expo is not None:
+            ctrls["AeExposureMode"] = expo
+        # Avoid IPA error: use Off instead of Auto here
+        flicker_off = getattr(LCTRLS.AeFlickerModeEnum, "Off", None)
+        if flicker_off is not None:
+            ctrls["AeFlickerMode"] = flicker_off
+        if ctrls:
+            p2.set_controls(ctrls)
+            log("[AE] Idle set → exposure=Short, flicker=Off")
+    except Exception as e:
+        log(f"[AE] Idle set failed: {e}")
+
+def _locks_before_clip(p2: Picamera2):
+    """Lock AE/AWB at clip start to avoid pumping."""
+    if not LCTRLS:
+        return
+    try:
+        p2.set_controls({"AeLocked": True})
+        log("[AE] Locked (AeLocked=True)")
+    except Exception:
+        pass
+    try:
+        p2.set_controls({"AwbLocked": True})
+        log("[WB] Locked (AwbLocked=True)")
+    except Exception:
+        pass
+
+def _locks_after_clip(p2: Picamera2):
+    """Unlock AE/AWB after the clip."""
+    if not LCTRLS:
+        return
+    try:
+        p2.set_controls({"AwbLocked": False})
+        log("[WB] Unlocked (AwbLocked=False)")
+    except Exception:
+        pass
+    try:
+        p2.set_controls({"AeLocked": False})
+        log("[AE] Unlocked (AeLocked=False)")
+    except Exception:
+        pass
+
+# ==========
 # LED Controller
 # ==========
 class LedController:
@@ -223,9 +412,6 @@ def free_space_ok(base="/"):
     pct_free = (st.f_bavail / st.f_blocks) * 100.0 if st.f_blocks else 0.0
     return pct_free > MIN_FREE_PCT, pct_free
 
-def log(msg):
-    print(msg, flush=True)
-
 # ==========
 # Camera & Sensor Init
 # ==========
@@ -275,14 +461,14 @@ if Transform and EFF_ROT_DEG in {0, 90, 180, 270}:
     except Exception:
         pass
 
-controls = {}
+controls: Dict[str, Any] = {}
 try:
     period_us = int(1_000_000 / REC_FPS)
     controls["FrameDurationLimits"] = (period_us, period_us)
 except Exception:
     pass
 
-# ---- MINIMAL CHANGE: disable RAW stream to avoid IMX708 PDAF path
+# ---- Disable RAW stream (lighter & safer on IMX708)
 record_config = picam2.create_video_configuration(main={"size": REC_RES}, raw=None, **transform_kw)
 picam2.configure(record_config)
 if controls:
@@ -291,6 +477,10 @@ if controls:
     except Exception:
         pass
 picam2.start()
+
+# Apply baseline AF + AE/AWB once streaming
+_apply_af_idle(picam2)
+_apply_ae_awb_idle(picam2)
 
 # ==========
 # Upload Worker (background)
@@ -328,7 +518,7 @@ def uploader_thread_fn(led: LedController):
                 file_path.unlink(missing_ok=True)
             except Exception as e:
                 log(f"[UPLOAD] Cleanup error for {file_path.name}: {e}")
-            # --- NEW: if we just cleared the last queued file, flip LED back to idle (when not LIVE)
+            # Flip LED back to idle when queue clears (if not LIVE)
             try:
                 if file_path.parent == QUEUE_DIR and MODE == "RECORD":
                     if not any(QUEUE_DIR.glob("*.mp4")):
@@ -351,13 +541,11 @@ def retry_scanner_thread_fn(led: LedController):
         try:
             queued = sorted([p for p in QUEUE_DIR.glob("*.mp4") if p.is_file()])
             if queued:
-                # keep existing behavior: show 'error' while queued files exist (only if not LIVE)
                 if MODE == "RECORD":
                     led.set_mode("error")
                 for p in queued:
                     upload_queue.put(p)
             else:
-                # --- NEW: nothing queued anymore; if not LIVE, ensure LED returns to idle
                 if MODE == "RECORD":
                     led.set_mode("idle")
         except Exception as e:
@@ -370,6 +558,30 @@ def retry_scanner_thread_fn(led: LedController):
 # ==========
 # Recording
 # ==========
+def _af_before_clip():
+    """Apply per-clip AF behavior before recording starts."""
+    if AF_STRATEGY == "continuous_lock_on_record":
+        locked = _af_pause_lock(picam2)
+        if not locked:
+            log("[AF] Lock not applied; continuing without lock.")
+    elif AF_STRATEGY == "one_shot_on_record":
+        if LCTRLS:
+            try:
+                picam2.set_controls({"AfMode": _af_mode("Auto")})
+                time.sleep(0.25)
+            except Exception:
+                pass
+        locked = _af_pause_lock(picam2)
+        if not locked:
+            log("[AF] One-shot lock not applied; continuing without lock.")
+    # 'continuous' and 'manual' need no special pre-clip action
+
+def _af_after_clip():
+    """Restore AF baseline after recording finishes."""
+    if AF_STRATEGY in ("continuous_lock_on_record", "one_shot_on_record"):
+        _af_resume(picam2)
+    # 'continuous' and 'manual' remain as-is
+
 def record_clip() -> Path:
     ts = utc_ts()
     h264 = TMP_DIR / f"{NODE_ID}_{ts}.h264"
@@ -377,12 +589,29 @@ def record_clip() -> Path:
 
     encoder = H264Encoder(bitrate=EFF_BITRATE_BPS) if EFF_BITRATE_BPS else H264Encoder()
 
+    # --- Locks before clip
+    _locks_before_clip(picam2)
+    _af_before_clip()
+
     picam2.start_recording(encoder, str(h264))
     time.sleep(REC_DUR)
     picam2.stop_recording()
 
+    # --- Unlocks after clip
+    _af_after_clip()
+    _locks_after_clip(picam2)
+
     try:
-        run(["ffmpeg", "-y", "-i", str(h264), "-c", "copy", str(mp4)], check=True)
+        # IMPORTANT: generate PTS and supply input rate to avoid "timestamps unset" warning
+        run([
+            "ffmpeg", "-y",
+            "-fflags", "+genpts",
+            "-r", str(REC_FPS),
+            "-i", str(h264),
+            "-movflags", "+faststart",
+            "-c", "copy",
+            str(mp4)
+        ], check=True)
     except CalledProcessError as e:
         log(f"[RECORD] ffmpeg error: {e}")
         try:
@@ -457,7 +686,6 @@ class _MJPEGOutput(Output):
     def outputframe(self, frame, keyframe=True, timestamp=None, packet=None, audio=None):
         global LIVE_LAST_ACTIVITY
         try:
-            # frame is already a full JPEG image (bytes-like)
             FRAMEBUS.write(frame)
             LIVE_LAST_ACTIVITY = time.monotonic()
         except Exception:
@@ -480,7 +708,6 @@ def _enter_live(led: LedController):
             except Exception:
                 pass
 
-        # ---- MINIMAL CHANGE: disable RAW in LIVE config too
         live_config = picam2.create_video_configuration(
             main={"size": REC_RES, "format": "YUV420"},
             raw=None,
@@ -496,6 +723,9 @@ def _enter_live(led: LedController):
 
         try:
             picam2.start()
+            # Apply idle policies in LIVE too
+            _apply_af_idle(picam2)
+            _apply_ae_awb_idle(picam2)
             try:
                 LIVE_ENCODER = MJPEGEncoder(quality=MJPEG_QUALITY)
             except TypeError:
@@ -510,6 +740,8 @@ def _enter_live(led: LedController):
                 if controls:
                     picam2.set_controls(controls)
                 picam2.start()
+                _apply_af_idle(picam2)
+                _apply_ae_awb_idle(picam2)
             except Exception as e2:
                 log(f"[LIVE] recovery failed: {e2}")
             return False
@@ -540,6 +772,8 @@ def _exit_live(led: LedController):
                 except Exception:
                     pass
             picam2.start()
+            _apply_af_idle(picam2)
+            _apply_ae_awb_idle(picam2)
             MODE = "RECORD"
             led.set_mode("error" if any(QUEUE_DIR.glob('*.mp4')) else "idle")
             log("[LIVE] stop")
@@ -557,6 +791,8 @@ def _exit_live(led: LedController):
                     except Exception:
                         pass
                 picam2.start()
+                _apply_af_idle(picam2)
+                _apply_ae_awb_idle(picam2)
                 MODE = "RECORD"
                 led.set_mode("error" if any(QUEUE_DIR.glob('*.mp4')) else "idle")
                 log("[LIVE] recovered to RECORD")
@@ -580,7 +816,7 @@ def _json_response(handler: BaseHTTPRequestHandler, status: int, obj: dict):
 from http import HTTPStatus
 
 class LiveHandler(BaseHTTPRequestHandler):
-    server_version = "CameraNodeLive/1.0"
+    server_version = "CameraNodeLive/1.1"
 
     def log_message(self, fmt, *args):
         pass
@@ -746,7 +982,6 @@ def main():
 # ==========
 # Graceful Shutdown
 # ==========
-stop_event = threading.Event()
 LED_GLOBAL: 'LedController'  # set in main()
 
 def _handle_sig(signum, frame):
