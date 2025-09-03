@@ -55,8 +55,6 @@ HB_STALE  = int(os.environ.get("HB_STALE_SEC", "30"))
 
 app = Flask(__name__)
 
-
-
 # --------- Profiles catalog (server-side source of truth for UI & validation) ---------
 PROFILES: Dict[str, Dict[str, Any]] = {
     "balanced_1080p30": {
@@ -65,8 +63,8 @@ PROFILES: Dict[str, Dict[str, Any]] = {
         "default_bitrate_kbps": 14000, "recommended_bitrate_kbps": [12000, 18000],
         "default_rotation": 0
     },
-    "action_1080p60": {
-        "resolution": "1920x1080", "fps": 60, "gop": 120,
+    "action_1080p50": {  # renamed
+        "resolution": "1920x1080", "fps": 50, "gop": 100,
         "h264_profile": "high", "h264_level": "4.2",
         "default_bitrate_kbps": 24000, "recommended_bitrate_kbps": [22000, 28000],
         "default_rotation": 0
@@ -157,7 +155,8 @@ def init_db():
             clip_duration_s INTEGER,
             updated_at REAL,
             profile TEXT,
-            sensor_threshold_mm INTEGER
+            sensor_threshold_mm INTEGER,
+            af_roi_norm TEXT
         );""")
         cur.execute("""
         CREATE TABLE IF NOT EXISTS camera_endpoints (
@@ -172,31 +171,25 @@ def init_db():
     # backfill columns for older DBs
     ensure_column("camera_settings", "profile", "TEXT")
     ensure_column("camera_settings", "sensor_threshold_mm", "INTEGER")
+    ensure_column("camera_settings", "af_roi_norm", "TEXT")
 
 # -------------------- Misc helpers --------------------
 
 def parse_any_ts(value: Any) -> Optional[float]:
     if value is None:
         return None
-    # numeric epoch?
     try:
         return float(value)
     except Exception:
         pass
-
     s = str(value).strip()
-
-    # If it ends with 'Z' (UTC), parse as UTC explicitly
     if s.endswith("Z"):
         try:
-            # handle both with/without fractional secs
-            dt = datetime.fromisoformat(s[:-1])  # naive
+            dt = datetime.fromisoformat(s[:-1])
             dt = dt.replace(tzinfo=timezone.utc)
             return dt.timestamp()
         except Exception:
             pass
-
-    # Generic ISO parse. If naive (no tzinfo), **assume UTC** to match node storage & TFT.
     try:
         dt = datetime.fromisoformat(s)
         if dt.tzinfo is None:
@@ -228,21 +221,14 @@ def node_id_candidate_columns(cols: List[str]) -> Optional[str]:
     return cols[0] if cols else None
 
 def build_node_row(node_id: str, hb_ts: Optional[float], now_ts: float) -> Dict[str, Any]:
-    """
-    Computes unified status with correct handling of FUTURE heartbeats:
-    - If heartbeat is in the future, we mark as STALE (within HB_STALE) or OFFLINE (beyond).
-      We DO NOT show ONLINE for any future timestamp.
-    """
     if hb_ts is None:
         return {"node_id": node_id, "last_heartbeat": None, "seconds_ago": None,
                 "status": "offline", "skew_ahead": 0}
-
     if hb_ts > now_ts:
         skew = int(hb_ts - now_ts + 0.5)
         status = "stale" if skew <= HB_STALE else "offline"
         return {"node_id": node_id, "last_heartbeat": hb_ts,
                 "seconds_ago": 0, "status": status, "skew_ahead": skew}
-
     delta = now_ts - hb_ts
     status = "online" if delta <= HB_ONLINE else ("stale" if delta <= HB_STALE else "offline")
     return {"node_id": node_id, "last_heartbeat": hb_ts,
@@ -285,7 +271,6 @@ def get_nodes() -> List[Dict[str, Any]]:
         return []
 
 def disk_free(path: Path) -> Dict[str, Any]:
-    """Robust disk stats using nearest existing directory."""
     try:
         target = path
         while not target.exists() and target != target.parent:
@@ -758,18 +743,37 @@ def config_download_redacted():
 # -------------------- CAMERA SETTINGS (profile-based) --------------------
 
 def list_camera_ids() -> List[str]:
-    toks = hub_cfg.get("auth_tokens", {}) or {}
-    ids = sorted(toks.keys())
-    return [i for i in ids if i.lower().startswith("cam") or i.lower().startswith("node")]
+    """Return all known camera IDs from settings, endpoints, and nodes (cam*)."""
+    with db_conn() as db:
+        cur = db.cursor()
+        cur.execute("""
+            WITH ids AS (
+              SELECT camera_id AS id FROM camera_settings
+              UNION
+              SELECT camera_id AS id FROM camera_endpoints
+              UNION
+              SELECT node_id   AS id FROM nodes WHERE lower(node_id) LIKE 'cam%'
+            )
+            SELECT id FROM ids ORDER BY 1;
+        """)
+        rows = cur.fetchall()
+    out=[]
+    for r in rows:
+        try:
+            out.append(r[0])
+        except Exception:
+            out.append(r['id'])
+    return out
 
 def get_camera_settings(camera_id: str) -> Dict[str, Any]:
     ensure_column("camera_settings", "profile", "TEXT")
     ensure_column("camera_settings", "sensor_threshold_mm", "INTEGER")
+    ensure_column("camera_settings", "af_roi_norm", "TEXT")
     with db_conn() as db:
         cur = db.cursor()
         cur.execute("""
             SELECT camera_id, resolution, fps, bitrate_kbps, rotation, clip_duration_s, updated_at,
-                   profile, sensor_threshold_mm
+                   profile, sensor_threshold_mm, af_roi_norm
             FROM camera_settings WHERE camera_id = ?;
         """, (camera_id,))
         row = cur.fetchone()
@@ -784,12 +788,21 @@ def get_camera_settings(camera_id: str) -> Dict[str, Any]:
                 "rotation": 0,
                 "clip_duration_s": 5,
                 "sensor_threshold_mm": 1000,
+                "af_roi_norm": None,
                 "updated_at": None
             }
         profile = row[7] if len(row) > 7 and row[7] else DEFAULT_PROFILE
         res = row[1] or _profile_to_res_fps(profile)[0]
         fps = int(row[2]) if row[2] is not None else _profile_to_res_fps(profile)[1]
         sensor_thr = int(row[8]) if len(row) > 8 and row[8] is not None else 1000
+        roi_norm = None
+        if len(row) > 9 and row[9]:
+            try:
+                val = pyjson.loads(row[9])
+                if isinstance(val, list) and len(val) == 4:
+                    roi_norm = [float(x) for x in val]
+            except Exception:
+                roi_norm = None
         return {
             "camera_id": row[0],
             "profile": profile,
@@ -799,6 +812,7 @@ def get_camera_settings(camera_id: str) -> Dict[str, Any]:
             "rotation": int(row[4]) if row[4] is not None else 0,
             "clip_duration_s": int(row[5]) if row[5] is not None else 5,
             "sensor_threshold_mm": sensor_thr,
+            "af_roi_norm": roi_norm,
             "updated_at": row[6],
         }
 
@@ -828,13 +842,23 @@ def upsert_camera_settings(payload: Dict[str, Any]) -> None:
         thr = 1000
     thr = max(30, min(4000, thr))
 
+    # ROI (optional)
+    roi_norm = payload.get("af_roi_norm", None)
+    roi_json = None
+    if isinstance(roi_norm, (list, tuple)) and len(roi_norm) == 4:
+        try:
+            vals = [max(0.0, min(1.0, float(x))) for x in roi_norm]
+            roi_json = pyjson.dumps(vals)
+        except Exception:
+            roi_json = None
+
     res, fps = _profile_to_res_fps(profile)
 
     with db_conn() as db:
         cur = db.cursor()
         cur.execute("""
-            INSERT INTO camera_settings (camera_id, resolution, fps, bitrate_kbps, rotation, clip_duration_s, updated_at, profile, sensor_threshold_mm)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO camera_settings (camera_id, resolution, fps, bitrate_kbps, rotation, clip_duration_s, updated_at, profile, sensor_threshold_mm, af_roi_norm)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(camera_id) DO UPDATE SET
               resolution=excluded.resolution,
               fps=excluded.fps,
@@ -843,9 +867,10 @@ def upsert_camera_settings(payload: Dict[str, Any]) -> None:
               clip_duration_s=excluded.clip_duration_s,
               updated_at=excluded.updated_at,
               profile=excluded.profile,
-              sensor_threshold_mm=excluded.sensor_threshold_mm;
+              sensor_threshold_mm=excluded.sensor_threshold_mm,
+              af_roi_norm=COALESCE(excluded.af_roi_norm, af_roi_norm);
         """, (
-            cam_id, res, int(fps), int(br), int(rot), int(dur), now, profile, int(thr)
+            cam_id, res, int(fps), int(br), int(rot), int(dur), now, profile, int(thr), roi_json
         ))
         db.commit()
 
@@ -932,6 +957,17 @@ def read_node_recording_yaml(ep: Dict[str,str]) -> Tuple[Optional[Dict[str,Any]]
     sensor_cfg = cfg.get("sensor") or {}
     sensor_threshold_mm = sensor_cfg.get("threshold_mm", None)
 
+    # NEW: autofocus ROI from node
+    af_cfg = cfg.get("autofocus") or {}
+    af_roi = af_cfg.get("roi_norm", None)
+    if isinstance(af_roi, (list, tuple)) and len(af_roi) == 4:
+        try:
+            af_roi = [float(x) for x in af_roi]
+        except Exception:
+            af_roi = None
+    else:
+        af_roi = None
+
     if not profile:
         res_legacy = str(rec.get("resolution","1920x1080"))
         fps_legacy = int(rec.get("framerate", rec.get("fps", 15)))
@@ -978,6 +1014,8 @@ def read_node_recording_yaml(ep: Dict[str,str]) -> Tuple[Optional[Dict[str,Any]]
     }
     if sensor_threshold_mm is not None:
         out["sensor_threshold_mm"] = sensor_threshold_mm
+    if af_roi is not None:
+        out["af_roi_norm"] = af_roi
 
     return out, None
 
@@ -1037,6 +1075,9 @@ def cameras_save():
     if not (30 <= thr <= 4000):
         return jsonify({"ok": False, "error": "sensor_threshold_mm out of range (30-4000)"}), 400
 
+    # Preserve existing ROI unless caller sends one
+    roi = data.get("af_roi_norm", current.get("af_roi_norm", None))
+
     upsert_camera_settings({
         "camera_id": cam_id,
         "profile": profile,
@@ -1044,6 +1085,7 @@ def cameras_save():
         "rotation": rot,
         "clip_duration_s": dur,
         "sensor_threshold_mm": thr,
+        "af_roi_norm": roi,
     })
     return jsonify({"ok": True}), 200
 
@@ -1085,20 +1127,66 @@ def cameras_push_to_node():
     cfg["rotation"] = int(cs.get("rotation", 0))
 
     rec = cfg.get("recording") or {}
-    rec["duration_s"] = int(cs.get("clip_duration_s", 5))
     res, fps = _profile_to_res_fps(profile)
     rec["resolution"] = res
     rec["framerate"] = int(fps)
+    rec["duration_s"] = int(cs.get("clip_duration_s", 5))
     cfg["recording"] = rec
 
     sensor_cfg = cfg.get("sensor") or {}
     sensor_cfg["threshold_mm"] = int(cs.get("sensor_threshold_mm", 1000))
     cfg["sensor"] = sensor_cfg
 
+    # NEW: include autofocus ROI if present
+    af_cfg = cfg.get("autofocus") or {}
+    roi = cs.get("af_roi_norm", None)
+    if isinstance(roi, list) and len(roi) == 4:
+        try:
+            vals = [max(0.0, min(1.0, float(x))) for x in roi]
+            af_cfg["roi_norm"] = vals
+        except Exception:
+            pass
+    if af_cfg:
+        cfg["autofocus"] = af_cfg
+
     new_text = yaml.safe_dump(cfg, sort_keys=False)
     ok, msg = _ssh_write_and_restart(user, host, cfg_path, new_text, svc)
     if not ok: return jsonify({"ok": False, "error": f"ssh write/restart failed: {msg.strip()}"}), 500
     return jsonify({"ok": True}), 200
+
+@app.route("/action/secure/cameras/forget", methods=["POST"])
+def cameras_forget():
+    from flask import request, jsonify
+    data = request.get_json(silent=True) or {}
+    cam_id = (data.get("camera_id") or "").strip()
+    if not cam_id:
+        return jsonify({"ok": False, "error": "camera_id required"}), 400
+
+    ssh_host = None
+    try:
+        with db_conn() as db:
+            cur = db.cursor()
+            cur.execute("SELECT ssh_host FROM camera_endpoints WHERE camera_id=?",(cam_id,))
+            row = cur.fetchone()
+            if row:
+                ssh_host = row[0]
+    except Exception:
+        pass
+
+    with db_conn() as db:
+        db.execute("DELETE FROM nodes WHERE node_id=?", (cam_id,))
+        db.execute("DELETE FROM node_tokens WHERE node_id=?", (cam_id,))
+        db.execute("DELETE FROM camera_endpoints WHERE camera_id=?", (cam_id,))
+        db.execute("DELETE FROM camera_settings WHERE camera_id=?", (cam_id,))
+        db.commit()
+
+    try:
+        import subprocess, os
+        subprocess.run(["ssh-keygen","-R", ssh_host or cam_id], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
+
+    return jsonify({"ok": True})
 
 @app.route("/action/secure/cameras/import_from_node", methods=["POST"])
 def cameras_import_from_node():
@@ -1121,10 +1209,13 @@ def cameras_import_from_node():
 def preview_page(camera_id: str):
     ep = get_camera_endpoint(camera_id)
     host = ep.get("ssh_host") or ""
+    # pass any stored ROI to prefill the browser controls (optional)
+    cs = get_camera_settings(camera_id)
     return render_template("preview.html",
                            camera_id=camera_id,
                            endpoint=ep,
                            preview_host=host,
+                           af_roi_norm=cs.get("af_roi_norm"),
                            title="Preview")
 
 @app.route("/action/secure/preview/start", methods=["POST"])
@@ -1153,6 +1244,34 @@ def preview_stop():
     ok, _, err = _http_json(f"http://{host}:8080/api/live/stop", method="POST", body={})
     if not ok:
         return jsonify({"ok": False, "error": f"node live/stop failed: {err or 'unknown'}"}), 502
+    return jsonify({"ok": True}), 200
+
+# NEW: save ROI from Preview into hub DB
+@app.route("/action/secure/preview/save_roi", methods=["POST"])
+def preview_save_roi():
+    data = request.get_json(silent=True) or {}
+    cam = (data.get("camera_id") or "").strip()
+    roi = data.get("roi_norm", None)
+    if not cam:
+        return jsonify({"ok": False, "error": "camera_id required"}), 400
+    if not (isinstance(roi, list) and len(roi) == 4):
+        return jsonify({"ok": False, "error": "roi_norm must be [x,y,w,h]"}), 400
+    try:
+        vals = [max(0.0, min(1.0, float(x))) for x in roi]
+    except Exception:
+        return jsonify({"ok": False, "error": "roi_norm values must be numbers"}), 400
+
+    current = get_camera_settings(cam)
+    payload = {
+        "camera_id": cam,
+        "profile": current["profile"],
+        "bitrate_kbps": current["bitrate_kbps"],
+        "rotation": current["rotation"],
+        "clip_duration_s": current["clip_duration_s"],
+        "sensor_threshold_mm": current["sensor_threshold_mm"],
+        "af_roi_norm": vals,
+    }
+    upsert_camera_settings(payload)
     return jsonify({"ok": True}), 200
 
 # -------------------- ADMIN TOOLS --------------------
@@ -1192,9 +1311,6 @@ def node_restart():
 
 @app.route("/action/secure/node/stop", methods=["POST"])
 def node_stop():
-    """
-    Stop the camera node service via SSH (suspend recordings).
-    """
     data = request.get_json(silent=True) or {}
     cam = (data.get("camera_id") or "").strip()
     if not cam:
@@ -1212,16 +1328,11 @@ def node_stop():
         err = (p.stderr or p.stdout or "").strip()
         return jsonify({"ok": False, "error": err or "stop failed"}), 500
 
-    # Wait briefly for inactive
     inactive = wait_unit_state(user, host, svc, "inactive", timeout_sec=12.0)
     return jsonify({"ok": True, "state": "inactive" if inactive else "unknown"}), 200
 
-
 @app.route("/action/secure/node/start", methods=["POST"])
 def node_start():
-    """
-    Start the camera node service via SSH (resume recordings).
-    """
     data = request.get_json(silent=True) or {}
     cam = (data.get("camera_id") or "").strip()
     if not cam:
@@ -1239,16 +1350,11 @@ def node_start():
         err = (p.stderr or p.stdout or "").strip()
         return jsonify({"ok": False, "error": err or "start failed"}), 500
 
-    # Wait briefly for active
     active = wait_unit_state(user, host, svc, "active", timeout_sec=12.0)
     return jsonify({"ok": True, "state": "active" if active else "unknown"}), 200
 
 @app.route("/action/secure/node/poweroff", methods=["POST"])
 def node_poweroff():
-    """
-    Power off a camera node via SSH.
-    Runs shutdown in the background so SSH can exit 0 immediately.
-    """
     data = request.get_json(silent=True) or {}
     cam = (data.get("camera_id") or "").strip()
     if not cam:
@@ -1260,12 +1366,9 @@ def node_poweroff():
     if not host:
         return jsonify({"ok": False, "error": "ssh_host not set"}), 400
 
-    # Background the shutdown so the SSH session doesn't die mid-command.
-    # Try the common shutdown path first, then a poweroff fallback.
     bg_shutdown = "nohup sudo /sbin/shutdown -h now </dev/null >/dev/null 2>&1 &"
     p = _ssh(["ssh", f"{user}@{host}", bg_shutdown])
     if p.returncode != 0:
-        # Fallback: some distros link only 'poweroff'
         bg_poweroff = "nohup sudo poweroff </dev/null >/dev/null 2>&1 &"
         p2 = _ssh(["ssh", f"{user}@{host}", bg_poweroff])
         if p2.returncode != 0:
@@ -1273,7 +1376,6 @@ def node_poweroff():
             return jsonify({"ok": False, "error": err or "poweroff failed"}), 500
 
     return jsonify({"ok": True, "message": f"{cam} poweroff requested"}), 200
-
 
 @app.route("/action/secure/node/logs", methods=["POST"])
 def node_logs():
@@ -1313,3 +1415,39 @@ init_db()
 
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=8080)
+
+# --- PATCH: override list_camera_ids with DB union (appended) ---
+def list_camera_ids() -> List[str]:
+    """Return all known camera IDs from settings, endpoints, and nodes (cam*)."""
+    with db_conn() as db:
+        cur = db.cursor()
+        cur.execute("""
+            WITH ids AS (
+              SELECT camera_id AS id FROM camera_settings
+              UNION
+              SELECT camera_id AS id FROM camera_endpoints
+              UNION
+              SELECT node_id   AS id FROM nodes WHERE lower(node_id) LIKE 'cam%'
+            )
+            SELECT id FROM ids ORDER BY 1;
+        """)
+        rows = cur.fetchall()
+    out=[]
+    for r in rows:
+        try:
+            out.append(r[0])
+        except Exception:
+            out.append(r['id'])
+    return out
+
+# --- PATCH: default PROFILES when none provided by backend ---
+try:
+    PROFILES
+except NameError:
+    PROFILES = {
+        "balanced_1080p30":      {"resolution":"1920x1080","fps":30,"gop":60,"h264_profile":"high","h264_level":"4.1","default_bitrate_kbps":14000,"recommended_bitrate_kbps":[12000,18000]},
+        "action_1080p50":        {"resolution":"1920x1080","fps":50,"gop":100,"h264_profile":"high","h264_level":"4.2","default_bitrate_kbps":24000,"recommended_bitrate_kbps":[22000,28000]},
+        "storage_saver_720p30":  {"resolution":"1280x720","fps":30,"gop":60,"h264_profile":"high","h264_level":"4.0","default_bitrate_kbps":7000,"recommended_bitrate_kbps":[6000,10000]},
+        "night_low_noise_1080p30":{"resolution":"1920x1080","fps":30,"gop":60,"h264_profile":"high","h264_level":"4.1","default_bitrate_kbps":18000,"recommended_bitrate_kbps":[16000,22000]},
+        "smooth_720p60":         {"resolution":"1280x720","fps":60,"gop":120,"h264_profile":"high","h264_level":"4.1","default_bitrate_kbps":12000,"recommended_bitrate_kbps":[10000,16000]},
+    }

@@ -5,19 +5,28 @@
 <h1 class="mb-3">Preview — {{ camera_id }}</h1>
 
 <div class="mb-3">
-  <div class="d-flex gap-2">
+  <div class="d-flex flex-wrap gap-2">
     <button id="btnStart" class="btn btn-primary">Enable Preview</button>
     <button id="btnStop" class="btn btn-outline-secondary">Exit Preview</button>
+
+    <!-- Simple ROI actions (purely browser-side, won’t touch the stream) -->
+    <button id="btnSaveROI" class="btn btn-outline-success ms-2">Save ROI to Hub</button>
+    <button id="btnSavePush" class="btn btn-success">Save ROI & Push to Node</button>
   </div>
   <div class="form-text">Preview pauses the recorder on the node while active (in the same process).</div>
 </div>
 
-<div class="ratio ratio-16x9 border rounded bg-light d-flex align-items-center justify-content-center">
+<!-- Keep the original, working Bootstrap ratio wrapper -->
+<div class="ratio ratio-16x9 border rounded bg-light d-flex align-items-center justify-content-center position-relative">
   <img id="stream" alt="preview stream" style="max-width:100%; max-height:100%; object-fit:contain; display:none;">
   <div id="nostream" class="text-muted">Preview not running</div>
+
+  <!-- SUPER-SIMPLE ROI overlay (percent-based; no canvas, no dimming) -->
+  <div id="roiBox"
+       style="position:absolute; border:2px dashed #00e676; display:none; pointer-events:none;"></div>
 </div>
 
-<!-- Sensor panel -->
+<!-- Sensor panel (unchanged) -->
 <div class="mt-3">
   <div class="card">
     <div class="card-body d-flex flex-wrap align-items-center gap-3">
@@ -47,9 +56,39 @@
   <div class="form-text mt-1">Live sensor reads from the node (VL53L0X). Updates ~2×/second.</div>
 </div>
 
+<!-- Minimal ROI numeric controls (normalized 0..1). Pure UI; does not affect streaming. -->
+<div class="mt-4">
+  <div class="card">
+    <div class="card-body">
+      <div class="d-flex flex-wrap align-items-end gap-3">
+        <div>
+          <label class="form-label mb-0">ROI X</label>
+          <input type="number" step="0.01" min="0" max="1" id="roiX" class="form-control" style="width:120px;">
+        </div>
+        <div>
+          <label class="form-label mb-0">ROI Y</label>
+          <input type="number" step="0.01" min="0" max="1" id="roiY" class="form-control" style="width:120px;">
+        </div>
+        <div>
+          <label class="form-label mb-0">ROI W</label>
+          <input type="number" step="0.01" min="0" max="1" id="roiW" class="form-control" style="width:120px;">
+        </div>
+        <div>
+          <label class="form-label mb-0">ROI H</label>
+          <input type="number" step="0.01" min="0" max="1" id="roiH" class="form-control" style="width:120px;">
+        </div>
+        <div class="ms-auto text-muted small">
+          Tip: ROI is normalized (0–1). Start with X=0, Y=0.60, W=1.00, H=0.40 for a lower-band focus bias.
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
 const camId = {{ camera_id|tojson }};
 const host = {{ (endpoint.ssh_host or '')|tojson }};
+const hubPrefillROI = {{ (af_roi_norm or None)|tojson }};
 
 async function postJSON(url, body) {
   const res = await fetch(url, {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body||{})});
@@ -58,6 +97,7 @@ async function postJSON(url, body) {
   return data;
 }
 
+/* ---------- Preview controls (unchanged behavior) ---------- */
 let sensorTimer = null;
 
 function setBadge(state) {
@@ -87,7 +127,6 @@ function updateSensorUI(obj) {
   dEl.textContent = (dist !== null) ? `${dist} mm` : '— mm';
   tEl.textContent = (thr  !== null) ? `${thr} mm`  : '— mm';
 
-  // Progress: clamp to [0..200% of threshold] so bar stays sensible.
   let pct = 0;
   if (dist !== null && thr && thr > 0) {
     pct = Math.max(0, Math.min(100, Math.round((dist / (thr*2)) * 100)));
@@ -106,13 +145,11 @@ async function pollSensorOnce() {
     const obj = await res.json().catch(()=> ({}));
     updateSensorUI(obj);
   } catch (e) {
-    // transient network / CORS / node reboot: just show no-data
     updateSensorUI(null);
   }
 }
 
 function startSensorPolling() {
-  // Do an immediate read, then poll every 500ms
   pollSensorOnce();
   if (sensorTimer) clearInterval(sensorTimer);
   sensorTimer = setInterval(pollSensorOnce, 500);
@@ -120,10 +157,52 @@ function startSensorPolling() {
 function stopSensorPolling() {
   if (sensorTimer) clearInterval(sensorTimer);
   sensorTimer = null;
-  // Keep last reading on screen; if you prefer to clear, uncomment below line:
-  // updateSensorUI(null);
 }
 
+/* ---------- ROI overlay (pure CSS %; zero impact on video) ---------- */
+const roiBox = document.getElementById('roiBox');
+const roiX = document.getElementById('roiX');
+const roiY = document.getElementById('roiY');
+const roiW = document.getElementById('roiW');
+const roiH = document.getElementById('roiH');
+
+function clamp01(v){ v = parseFloat(v); if (isNaN(v)) v = 0; return Math.max(0, Math.min(1, v)); }
+function loadStoredROI(){
+  const key = `roi.${camId}`;
+  let v = null;
+  try { v = JSON.parse(localStorage.getItem(key) || 'null'); } catch(e){ v = null; }
+  if (!v && Array.isArray(hubPrefillROI) && hubPrefillROI.length === 4){ v = hubPrefillROI; }
+  if (!v) v = [0.0, 0.60, 1.0, 0.40];
+  return v.map(clamp01);
+}
+function storeROI(arr){
+  try { localStorage.setItem(`roi.${camId}`, JSON.stringify(arr)); } catch(e){}
+}
+
+function updateOverlayFromInputs(){
+  const nx = clamp01(roiX.value), ny = clamp01(roiY.value), nw = clamp01(roiW.value), nh = clamp01(roiH.value);
+  const adjW = Math.min(nw, 1 - nx);
+  const adjH = Math.min(nh, 1 - ny);
+  roiBox.style.left = (nx * 100) + '%';
+  roiBox.style.top  = (ny * 100) + '%';
+  roiBox.style.width  = (adjW * 100) + '%';
+  roiBox.style.height = (adjH * 100) + '%';
+  roiBox.style.display = '';
+  storeROI([nx, ny, adjW, adjH]);
+}
+
+function initROI(){
+  const roi = loadStoredROI();
+  roiX.value = roi[0].toFixed(2);
+  roiY.value = roi[1].toFixed(2);
+  roiW.value = roi[2].toFixed(2);
+  roiH.value = roi[3].toFixed(2);
+  updateOverlayFromInputs();
+}
+
+[roiX, roiY, roiW, roiH].forEach(inp => inp.addEventListener('input', updateOverlayFromInputs));
+
+/* ---------- Start/Stop preview (unchanged) ---------- */
 async function startPreview() {
   await postJSON('/action/secure/preview/start', {camera_id: camId});
   document.getElementById('stream').src = `http://${host}:8080/api/live/mjpeg?ts=${Date.now()}`;
@@ -136,10 +215,30 @@ async function stopPreview() {
   await postJSON('/action/secure/preview/stop', {camera_id: camId});
   const img = document.getElementById('stream');
   img.removeAttribute('src');
-  document.getElementById('stream').style.display = 'none';
+  img.style.display = 'none';
   document.getElementById('nostream').style.display = '';
 }
 
+/* ---------- Save / Push ROI ---------- */
+function currentROI(){
+  return [
+    clamp01(roiX.value),
+    clamp01(roiY.value),
+    clamp01(roiW.value),
+    clamp01(roiH.value),
+  ];
+}
+async function saveROIToHub(){
+  const roi = currentROI();
+  await postJSON('/action/secure/preview/save_roi', {camera_id: camId, roi_norm: roi});
+}
+async function saveAndPushROI(){
+  await saveROIToHub();
+  await postJSON('/action/secure/cameras/push', {camera_id: camId});
+  alert('ROI saved and pushed. Node restarted.');
+}
+
+/* ---------- Wire UI ---------- */
 document.getElementById('btnStart').addEventListener('click', async ()=>{
   try { await startPreview(); } catch(e){ alert('Start failed: '+e.message); }
 });
@@ -147,7 +246,16 @@ document.getElementById('btnStop').addEventListener('click', async ()=>{
   try { await stopPreview(); } catch(e){ alert('Stop failed: '+e.message); }
 });
 
-// Optional: if you want sensor data even when preview is not active, uncomment:
-// startSensorPolling();
+document.getElementById('btnSaveROI').addEventListener('click', async ()=>{
+  try { await saveROIToHub(); alert('ROI saved on hub. Use "Push to Node" later or click "Save & Push".'); }
+  catch(e){ alert('Save failed: ' + e.message); }
+});
+document.getElementById('btnSavePush').addEventListener('click', async ()=>{
+  try { await saveAndPushROI(); }
+  catch(e){ alert('Save & Push failed: ' + e.message); }
+});
+
+/* ---------- Boot ---------- */
+initROI();
 </script>
 {% endblock %}

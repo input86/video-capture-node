@@ -12,7 +12,7 @@
 {% if has_profiles %}
   {% set PROFILE_KEYS = profiles.keys() %}
 {% else %}
-  {% set PROFILE_KEYS = ['balanced_1080p30','action_1080p60','storage_saver_720p30','night_low_noise_1080p30','smooth_720p60'] %}
+  {% set PROFILE_KEYS = ['balanced_1080p30','action_1080p50','storage_saver_720p30','night_low_noise_1080p30','smooth_720p60'] %}
 {% endif %}
 
 <div class="accordion" id="camsAccordion">
@@ -49,6 +49,12 @@
                         or 5 %}
   {% set eff_sensor_thr = (cam.sensor_threshold_mm is not none and cam.sensor_threshold_mm) or 1000 %}
 
+  {# AF values (with defaults) #}
+  {% set af_strategy = cam.af_strategy or 'continuous_lock_on_record' %}
+  {% set af_range    = cam.af_range or 'normal' %}
+  {% set af_speed    = cam.af_speed or 'fast' %}
+  {% set af_roi_norm = cam.af_roi_norm or '' %}
+
   <div class="accordion-item">
     <h2 class="accordion-header" id="{{ hdr_id }}">
       <button class="accordion-button collapsed d-flex align-items-center" type="button"
@@ -78,6 +84,7 @@
           <button class="btn btn-sm btn-outline-success btn-start" data-cam="{{ cam_id }}">Start Service</button>
           <!-- Existing: Power Off -->
           <button class="btn btn-sm btn-outline-danger btn-poweroff" data-cam="{{ cam_id }}">Power Off</button>
+          <button class="btn btn-sm btn-outline-danger btn-forget" data-cam="{{ cam_id }}">Forget</button>
           <span class="ms-auto small text-muted">Last updated: {{ cam.updated_at and cam.updated_at|date_fmt or "—" }}</span>
         </div>
 
@@ -152,6 +159,50 @@
             </div>
           </div>
 
+          <!-- NEW: Focus & Tracking -->
+          <div class="mt-4 p-3 border rounded">
+            <h6 class="mb-2">Focus & Tracking (IMX708 AF)</h6>
+            <div class="row g-3">
+              <div class="col-md-4">
+                <label class="form-label">AF Strategy</label>
+                <select class="form-select" name="af_strategy">
+                  {% for key, label in {
+                    'continuous_lock_on_record':'Continuous (locks during clip)',
+                    'continuous':'Continuous (never lock)',
+                    'one_shot_on_record':'One-shot then lock',
+                    'manual':'Manual (no AF)'
+                  }.items() %}
+                  <option value="{{ key }}" {% if af_strategy==key %}selected{% endif %}>{{ label }}</option>
+                  {% endfor %}
+                </select>
+                <div class="form-text">Recommended: Continuous (locks during clip)</div>
+              </div>
+              <div class="col-md-3">
+                <label class="form-label">AF Range</label>
+                <select class="form-select" name="af_range">
+                  {% for key,label in {'normal':'Normal','macro':'Macro','full':'Full (near–far)'} .items() %}
+                    <option value="{{ key }}" {% if af_range==key %}selected{% endif %}>{{ label }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="col-md-3">
+                <label class="form-label">AF Speed</label>
+                <select class="form-select" name="af_speed">
+                  {% for key,label in {'fast':'Fast','normal':'Normal'} .items() %}
+                    <option value="{{ key }}" {% if af_speed==key %}selected{% endif %}>{{ label }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="col-md-12">
+                <label class="form-label">AF ROI (x,y,w,h in 0..1)</label>
+                <input type="text" class="form-control" name="af_roi_norm" placeholder="e.g. 0.00,0.40,1.00,0.20" value="{{ af_roi_norm }}">
+                <div class="form-text">
+                  Optional: bias focus to a region (normalized). Example <code>0,0.40,1,0.20</code> = center strip.
+                </div>
+              </div>
+            </div>
+          </div>
+
           <!-- Effective Settings Panel -->
           <div class="mt-3 p-3 border rounded bg-light">
             <div class="row gy-2">
@@ -223,7 +274,7 @@ function pickProfile(key){
   // Fallback summaries if profiles not provided by backend
   const defaults = {
     balanced_1080p30: {resolution:"1920x1080", fps:30, gop:60, h264_profile:"high", h264_level:"4.1", default_bitrate_kbps:14000, recommended_bitrate_kbps:[12000,18000]},
-    action_1080p60:   {resolution:"1920x1080", fps:60, gop:120, h264_profile:"high", h264_level:"4.2", default_bitrate_kbps:24000, recommended_bitrate_kbps:[22000,28000]},
+    action_1080p50:   {resolution:"1920x1080", fps:50, gop:100, h264_profile:"high", h264_level:"4.2", default_bitrate_kbps:24000, recommended_bitrate_kbps:[22000,28000]},
     storage_saver_720p30:{resolution:"1280x720", fps:30, gop:60, h264_profile:"high", h264_level:"4.0", default_bitrate_kbps:7000, recommended_bitrate_kbps:[6000,10000]},
     night_low_noise_1080p30:{resolution:"1920x1080", fps:30, gop:60, h264_profile:"high", h264_level:"4.1", default_bitrate_kbps:18000, recommended_bitrate_kbps:[16000,22000]},
     smooth_720p60:    {resolution:"1280x720", fps:60, gop:120, h264_profile:"high", h264_level:"4.1", default_bitrate_kbps:12000, recommended_bitrate_kbps:[10000,16000]},
@@ -310,7 +361,7 @@ document.addEventListener('input', (ev)=>{
 
 // Delegate button clicks (includes .btn-stop, .btn-start, .btn-poweroff)
 document.addEventListener('click', async (ev) => {
-  const btn = ev.target.closest('.btn-save, .btn-save-endpoint, .btn-push, .btn-import, .btn-stop, .btn-start, .btn-poweroff');
+  const btn = ev.target.closest('.btn-save, .btn-save-endpoint, .btn-push, .btn-import, .btn-stop, .btn-start, .btn-poweroff, .btn-forget');
   if(!btn) return;
 
   const cam = btn.dataset.cam;
@@ -325,8 +376,12 @@ document.addEventListener('click', async (ev) => {
         bitrate_kbps: parseInt(form.querySelector('[name=bitrate_kbps]').value,10),
         rotation: parseInt(form.querySelector('[name=rotation]').value,10),
         clip_duration_s: parseInt(form.querySelector('[name=clip_duration_s]').value,10),
-        // NEW:
         sensor_threshold_mm: parseInt(form.querySelector('[name=sensor_threshold_mm]').value,10),
+        // AF fields:
+        af_strategy: form.querySelector('[name=af_strategy]').value,
+        af_range: form.querySelector('[name=af_range]').value,
+        af_speed: form.querySelector('[name=af_speed]').value,
+        af_roi_norm: form.querySelector('[name=af_roi_norm]').value.trim(),
       };
       await postJSON('/action/secure/cameras/save', payload);
       alert('Saved on hub.');
@@ -373,6 +428,20 @@ document.addEventListener('click', async (ev) => {
       if(!confirm(`Power off ${cam}? This will safely shut down the node.`)) return;
       await postJSON('/action/secure/node/poweroff', {camera_id: cam});
       alert(`${cam} poweroff requested. It will go offline shortly.`);
+    }
+
+    else if (btn.classList.contains('btn-forget')) {
+      if (!confirm(`Forget ${cam}? This removes tokens, settings, DB rows and SSH host entries on the hub.`)) return;
+      const typed = prompt(`Type the camera id to confirm: ${cam}`);
+      if (!typed || typed.trim() !== cam) { alert('Canceled: camera id did not match.'); return; }
+      btn.disabled = true;
+      try {
+        await postJSON('/action/secure/cameras/forget', {camera_id: cam});
+        alert(`${cam} forgotten.`);
+        location.reload();
+      } finally {
+        btn.disabled = false;
+      }
     }
 
   } catch(e) {

@@ -308,3 +308,53 @@ def index():
 if __name__ == "__main__":
     # For ad-hoc testing only; systemd/gunicorn runs this in production.
     app.run(host="0.0.0.0", port=5000)
+
+
+@app.route("/api/v1/metrics", methods=["POST"])
+def api_metrics():
+    from flask import request, jsonify
+    token = (request.headers.get("X-Auth-Token") or "").strip()
+    node_id = node_from_token(token)
+    if not node_id:
+        return jsonify({"ok": False, "error": "unauthorized"}), 401
+
+    data = request.get_json(silent=True) or {}
+    ip = request.headers.get("X-Forwarded-For") or request.remote_addr
+    # ISO 8601 UTC with trailing Z
+    import datetime, sqlite3
+    now = datetime.datetime.utcnow().replace(tzinfo=datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+
+    # Normalize field names coming from nodes
+    ver = data.get("version")
+    free = data.get("free_space_pct", data.get("free_percent"))
+    try:
+        free = float(free) if free is not None else None
+    except Exception:
+        free = None
+    qlen = data.get("queue_len")
+    try:
+        qlen = int(qlen) if qlen is not None else None
+    except Exception:
+        qlen = None
+
+    with db_conn() as db:
+        # make sure node exists and update last_seen/ip
+        db.execute("""
+            INSERT INTO nodes (node_id,last_seen,ip)
+            VALUES (?,?,?)
+            ON CONFLICT(node_id) DO UPDATE SET
+              last_seen=excluded.last_seen,
+              ip=excluded.ip
+        """, (node_id, now, ip))
+        # update optional metrics if provided (leave existing if None)
+        db.execute("""
+            UPDATE nodes
+               SET version        = COALESCE(?, version),
+                   free_space_pct = COALESCE(?, free_space_pct),
+                   queue_len      = COALESCE(?, queue_len)
+             WHERE node_id = ?
+        """, (ver, free, qlen, node_id))
+        db.commit()
+
+    return jsonify({"ok": True})
+

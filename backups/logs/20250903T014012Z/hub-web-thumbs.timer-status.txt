@@ -1,0 +1,18 @@
+### systemctl status hub-web-thumbs.timer
+● hub-web-thumbs.timer - Run Hub Web Admin thumbnail builder every 5 minutes
+     Loaded: loaded (/etc/systemd/system/hub-web-thumbs.timer; enabled; preset: enabled)
+     Active: active (waiting) since Fri 2025-08-29 21:06:47 EDT; 4 days ago
+    Trigger: Tue 2025-09-02 21:41:27 EDT; 1min 5s left
+   Triggers: ● hub-web-thumbs.service
+
+Aug 29 21:06:47 hub-server systemd[1]: Started hub-web-thumbs.timer - Run Hub Web Admin thumbnail builder every 5 minutes.
+
+### is-enabled hub-web-thumbs.timer
+enabled
+
+### show hub-web-thumbs.timer (selected)
+Id=hub-web-thumbs.timer
+Description=Run Hub Web Admin thumbnail builder every 5 minutes
+ActiveState=active
+SubState=waiting
+FragmentPath=/etc/systemd/system/hub-web-thumbs.timer
