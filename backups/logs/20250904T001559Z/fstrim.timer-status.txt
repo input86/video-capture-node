@@ -1,0 +1,19 @@
+### systemctl status fstrim.timer
+● fstrim.timer - Discard unused blocks once a week
+     Loaded: loaded (/lib/systemd/system/fstrim.timer; enabled; preset: enabled)
+     Active: active (waiting) since Tue 2025-09-02 21:43:35 EDT; 22h ago
+    Trigger: Mon 2025-09-08 00:47:54 EDT; 4 days left
+   Triggers: ● fstrim.service
+       Docs: man:fstrim
+
+Sep 02 21:43:35 hub-server systemd[1]: Started fstrim.timer - Discard unused blocks once a week.
+
+### is-enabled fstrim.timer
+enabled
+
+### show fstrim.timer (selected)
+Id=fstrim.timer
+Description=Discard unused blocks once a week
+ActiveState=active
+SubState=waiting
+FragmentPath=/lib/systemd/system/fstrim.timer

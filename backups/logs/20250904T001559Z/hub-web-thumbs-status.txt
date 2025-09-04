@@ -1,0 +1,25 @@
+### systemctl status hub-web-thumbs
+○ hub-web-thumbs.service - Hub Web Admin - Thumbnail Builder
+     Loaded: loaded (/etc/systemd/system/hub-web-thumbs.service; static)
+     Active: inactive (dead) since Wed 2025-09-03 20:15:04 EDT; 1min 3s ago
+TriggeredBy: ● hub-web-thumbs.timer
+    Process: 79043 ExecStart=/home/pi/hub_web_admin/venv/bin/python /home/pi/hub_web_admin/thumbs.py --prune (code=exited, status=0/SUCCESS)
+   Main PID: 79043 (code=exited, status=0/SUCCESS)
+        CPU: 3.720s
+
+Sep 03 20:15:03 hub-server systemd[1]: Starting hub-web-thumbs.service - Hub Web Admin - Thumbnail Builder...
+Sep 03 20:15:04 hub-server python[79043]: [thumbs] built=1 removed=0 at 2025-09-04T00:15:04.948016Z
+Sep 03 20:15:04 hub-server systemd[1]: hub-web-thumbs.service: Deactivated successfully.
+Sep 03 20:15:04 hub-server systemd[1]: Finished hub-web-thumbs.service - Hub Web Admin - Thumbnail Builder.
+Sep 03 20:15:04 hub-server systemd[1]: hub-web-thumbs.service: Consumed 3.720s CPU time.
+
+### is-enabled hub-web-thumbs
+static
+
+### show hub-web-thumbs (selected)
+ExecStart={ path=/home/pi/hub_web_admin/venv/bin/python ; argv[]=/home/pi/hub_web_admin/venv/bin/python /home/pi/hub_web_admin/thumbs.py --prune ; ignore_errors=no ; start_time=[Wed 2025-09-03 20:15:03 EDT] ; stop_time=[Wed 2025-09-03 20:15:04 EDT] ; pid=79043 ; code=exited ; status=0 }
+Id=hub-web-thumbs.service
+Description=Hub Web Admin - Thumbnail Builder
+ActiveState=inactive
+SubState=dead
+FragmentPath=/etc/systemd/system/hub-web-thumbs.service

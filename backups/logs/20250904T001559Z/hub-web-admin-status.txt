@@ -1,0 +1,29 @@
+### systemctl status hub-web-admin
+● hub-web-admin.service - Hub Web Admin (Gunicorn behind Nginx)
+     Loaded: loaded (/etc/systemd/system/hub-web-admin.service; enabled; preset: enabled)
+     Active: active (running) since Wed 2025-09-03 16:41:26 EDT; 3h 34min ago
+   Main PID: 74981 (gunicorn)
+      Tasks: 7 (limit: 4458)
+        CPU: 59.925s
+     CGroup: /system.slice/hub-web-admin.service
+             ├─74981 /home/pi/hub_web_admin/venv/bin/python3 /home/pi/hub_web_admin/venv/bin/gunicorn -w 2 -k gthread --threads 2 -b 127.0.0.1:8080 app:app
+             ├─74982 /home/pi/hub_web_admin/venv/bin/python3 /home/pi/hub_web_admin/venv/bin/gunicorn -w 2 -k gthread --threads 2 -b 127.0.0.1:8080 app:app
+             └─74983 /home/pi/hub_web_admin/venv/bin/python3 /home/pi/hub_web_admin/venv/bin/gunicorn -w 2 -k gthread --threads 2 -b 127.0.0.1:8080 app:app
+
+Sep 03 16:41:26 hub-server systemd[1]: Started hub-web-admin.service - Hub Web Admin (Gunicorn behind Nginx).
+Sep 03 16:41:27 hub-server gunicorn[74981]: [2025-09-03 16:41:27 -0400] [74981] [INFO] Starting gunicorn 23.0.0
+Sep 03 16:41:27 hub-server gunicorn[74981]: [2025-09-03 16:41:27 -0400] [74981] [INFO] Listening at: http://127.0.0.1:8080 (74981)
+Sep 03 16:41:27 hub-server gunicorn[74981]: [2025-09-03 16:41:27 -0400] [74981] [INFO] Using worker: gthread
+Sep 03 16:41:27 hub-server gunicorn[74982]: [2025-09-03 16:41:27 -0400] [74982] [INFO] Booting worker with pid: 74982
+Sep 03 16:41:27 hub-server gunicorn[74983]: [2025-09-03 16:41:27 -0400] [74983] [INFO] Booting worker with pid: 74983
+
+### is-enabled hub-web-admin
+enabled
+
+### show hub-web-admin (selected)
+ExecStart={ path=/home/pi/hub_web_admin/venv/bin/gunicorn ; argv[]=/home/pi/hub_web_admin/venv/bin/gunicorn -w 2 -k gthread --threads 2 -b 127.0.0.1:8080 app:app ; ignore_errors=no ; start_time=[Wed 2025-09-03 16:41:26 EDT] ; stop_time=[n/a] ; pid=74981 ; code=(null) ; status=0/0 }
+Id=hub-web-admin.service
+Description=Hub Web Admin (Gunicorn behind Nginx)
+ActiveState=active
+SubState=running
+FragmentPath=/etc/systemd/system/hub-web-admin.service

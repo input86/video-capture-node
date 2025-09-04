@@ -1,0 +1,29 @@
+### systemctl status hub-heartbeat
+● hub-heartbeat.service - Hub Heartbeat Microservice (Flask)
+     Loaded: loaded (/etc/systemd/system/hub-heartbeat.service; enabled; preset: enabled)
+     Active: active (running) since Tue 2025-09-02 21:43:45 EDT; 22h ago
+   Main PID: 775 (python3)
+      Tasks: 1 (limit: 4458)
+        CPU: 6.513s
+     CGroup: /system.slice/hub-heartbeat.service
+             └─775 /usr/bin/python3 /home/pi/hub_server/heartbeatd.py
+
+Sep 02 21:43:45 hub-server systemd[1]: Started hub-heartbeat.service - Hub Heartbeat Microservice (Flask).
+Sep 02 21:43:48 hub-server python3[775]:  * Serving Flask app 'heartbeatd'
+Sep 02 21:43:48 hub-server python3[775]:  * Debug mode: off
+Sep 02 21:43:48 hub-server python3[775]: WARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.
+Sep 02 21:43:48 hub-server python3[775]:  * Running on all addresses (0.0.0.0)
+Sep 02 21:43:48 hub-server python3[775]:  * Running on http://127.0.0.1:5050
+Sep 02 21:43:48 hub-server python3[775]:  * Running on http://192.168.0.38:5050
+Sep 02 21:43:48 hub-server python3[775]: Press CTRL+C to quit
+
+### is-enabled hub-heartbeat
+enabled
+
+### show hub-heartbeat (selected)
+ExecStart={ path=/usr/bin/python3 ; argv[]=/usr/bin/python3 /home/pi/hub_server/heartbeatd.py ; ignore_errors=no ; start_time=[Tue 2025-09-02 21:43:45 EDT] ; stop_time=[n/a] ; pid=775 ; code=(null) ; status=0/0 }
+Id=hub-heartbeat.service
+Description=Hub Heartbeat Microservice (Flask)
+ActiveState=active
+SubState=running
+FragmentPath=/etc/systemd/system/hub-heartbeat.service
