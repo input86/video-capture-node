@@ -1,0 +1,31 @@
+### systemctl status camera-heartbeat
+● camera-heartbeat.service - Camera Heartbeat Client
+     Loaded: loaded (/etc/systemd/system/camera-heartbeat.service; enabled; preset: enabled)
+     Active: active (running) since Tue 2025-09-02 21:43:53 EDT; 22h ago
+   Main PID: 578 (python)
+      Tasks: 1 (limit: 178)
+        CPU: 1min 8.443s
+     CGroup: /system.slice/camera-heartbeat.service
+             └─578 /home/pi/camera_node/venv/bin/python /home/pi/camera_node/heartbeat_client.py
+
+Sep 03 20:13:05 hub-cam01 python[578]: [hb] POST http://192.168.0.150:5000/api/v1/heartbeat payload={'node_id': 'cam01', 'version': 'camnode-1.0.0', 'hostname': 'hub-cam01', 'free_space_pct': 91.79, 'queue_len': 0}
+Sep 03 20:13:05 hub-cam01 python[578]: [hb] status=200 ok
+Sep 03 20:13:15 hub-cam01 python[578]: [hb] POST http://192.168.0.150:5000/api/v1/heartbeat payload={'node_id': 'cam01', 'version': 'camnode-1.0.0', 'hostname': 'hub-cam01', 'free_space_pct': 91.79, 'queue_len': 0}
+Sep 03 20:13:15 hub-cam01 python[578]: [hb] status=200 ok
+Sep 03 20:13:25 hub-cam01 python[578]: [hb] POST http://192.168.0.150:5000/api/v1/heartbeat payload={'node_id': 'cam01', 'version': 'camnode-1.0.0', 'hostname': 'hub-cam01', 'free_space_pct': 91.79, 'queue_len': 0}
+Sep 03 20:13:26 hub-cam01 python[578]: [hb] status=200 ok
+Sep 03 20:13:36 hub-cam01 python[578]: [hb] POST http://192.168.0.150:5000/api/v1/heartbeat payload={'node_id': 'cam01', 'version': 'camnode-1.0.0', 'hostname': 'hub-cam01', 'free_space_pct': 91.79, 'queue_len': 0}
+Sep 03 20:13:36 hub-cam01 python[578]: [hb] status=200 ok
+Sep 03 20:13:46 hub-cam01 python[578]: [hb] POST http://192.168.0.150:5000/api/v1/heartbeat payload={'node_id': 'cam01', 'version': 'camnode-1.0.0', 'hostname': 'hub-cam01', 'free_space_pct': 91.79, 'queue_len': 0}
+Sep 03 20:13:46 hub-cam01 python[578]: [hb] status=200 ok
+
+### is-enabled camera-heartbeat
+enabled
+
+### show camera-heartbeat (selected)
+ExecStart={ path=/home/pi/camera_node/venv/bin/python ; argv[]=/home/pi/camera_node/venv/bin/python /home/pi/camera_node/heartbeat_client.py ; ignore_errors=no ; start_time=[Tue 2025-09-02 21:43:53 EDT] ; stop_time=[n/a] ; pid=578 ; code=(null) ; status=0/0 }
+Id=camera-heartbeat.service
+Description=Camera Heartbeat Client
+ActiveState=active
+SubState=running
+FragmentPath=/etc/systemd/system/camera-heartbeat.service
